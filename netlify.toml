@@ -10,7 +10,14 @@
 
 # Redirects and rewrites
 [[redirects]]
-  # API routes should go to serverless function, stripping /api prefix
+  # Health endpoint - specific function
+  from = "/api/health"
+  to = "/.netlify/functions/api-health"
+  status = 200
+  force = true
+
+[[redirects]]
+  # Other API routes should go to main server function
   from = "/api/*"
   to = "/.netlify/functions/server/:splat"
   status = 200

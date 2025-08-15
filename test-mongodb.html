@@ -69,7 +69,10 @@
             🛠️ Test Health Check
         </button>
         <button class="test-button" onclick="testMainAPI()">
-            ⚡ Test Main API
+            ⚡ Test Main API (/api/health)
+        </button>
+        <button class="test-button" onclick="testLogin()">
+            🔐 Test Login API  
         </button>
     </div>
     
@@ -110,13 +113,33 @@
         }
         
         async function testMainAPI() {
-            showLoading('Đang test main API...');
+            showLoading('Đang test main API /api/health...');
             try {
                 const response = await fetch('/api/health');
                 const data = await response.json();
                 showResult(data, response.status === 200);
             } catch (error) {
                 showError(`API Error: ${error.message}`);
+            }
+        }
+        
+        async function testLogin() {
+            showLoading('Đang test login API...');
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        username: 'test',
+                        password: 'test123'
+                    })
+                });
+                const data = await response.json();
+                showResult(data, response.status === 200 || response.status === 400);
+            } catch (error) {
+                showError(`Login Test Error: ${error.message}`);
             }
         }
         

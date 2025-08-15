@@ -1,6 +1,9 @@
 // netlify/functions/server.js - Express server cho Netlify
+require('dotenv').config(); // Load environment variables
+
 const express = require('express');
 const mongoose = require('mongoose');
+const multer = require('multer');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -85,6 +88,20 @@ const trackSchema = new mongoose.Schema({
 
 const Track = mongoose.models.Track || mongoose.model('Track', trackSchema);
 
+// Playlist Schema
+const playlistSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  description: { type: String, default: '' },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  tracks: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Track' }],
+  isPublic: { type: Boolean, default: false },
+  thumbnail: { type: String, default: '' },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+});
+
+const Playlist = mongoose.models.Playlist || mongoose.model('Playlist', playlistSchema);
+
 // JWT Secret
 const JWT_SECRET = process.env.JWT_SECRET || 'flowplay_secret_key_2025';
 
@@ -109,28 +126,17 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// Database middleware - connect before each request (optional)
+// Database middleware - connect before each request
 app.use(async (req, res, next) => {
   try {
-    if (!isConnected) {
-      await connectToDatabase();
-    }
+    await connectToDatabase();
     next();
   } catch (error) {
-    console.error('Database connection failed:', error);
-    // Don't block the request, continue anyway
-    next();
+    res.status(500).json({ error: 'Database connection failed' });
   }
 });
 
-// Root route for testing
-app.get('/', (req, res) => {
-  res.json({
-    message: 'FlowPlay API Server',
-    timestamp: new Date().toISOString(),
-    status: 'running'
-  });
-});
+// Routes
 
 // Health check
 app.get('/health', (req, res) => {
@@ -336,23 +342,5 @@ app.put('/user/profile', authenticateToken, async (req, res) => {
   }
 });
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error('Server error:', err);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: err.message
-  });
-});
-
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    error: 'Route not found',
-    path: req.path,
-    method: req.method
-  });
-});
-
-// Export handler for Netlify - ĐÂY LÀ KEY!
+// Export handler for Netlify
 module.exports.handler = serverless(app);
