@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlowPlay - MongoDB Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        .test-button {
+            background: #4CAF50;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 10px;
+            font-size: 16px;
+        }
+        .test-button:hover {
+            background: #45a049;
+        }
+        .test-button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        .result {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 6px;
+            margin: 20px 0;
+            white-space: pre-wrap;
+            font-family: monospace;
+            border-left: 4px solid #4CAF50;
+        }
+        .error {
+            border-left-color: #f44336;
+            color: #ffcdd2;
+        }
+        .loading {
+            color: #fff3cd;
+            border-left-color: #ffc107;
+        }
+        .logs {
+            max-height: 400px;
+            overflow-y: auto;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎵 FlowPlay - MongoDB Connection Test</h1>
+    <p>Test MongoDB connection trên Netlify Functions:</p>
+    
+    <div>
+        <button class="test-button" onclick="testConnection()">
+            🔍 Test Connection (Chi tiết)
+        </button>
+        <button class="test-button" onclick="testSimple()">
+            ⚡ Simple Test
+        </button>
+        <button class="test-button" onclick="testAPI()">
+            🛠️ Test Main API
+        </button>
+    </div>
+    
+    <div id="result"></div>
+    
+    <script>
+        async function testConnection() {
+            showLoading('Đang test connection với log chi tiết...');
+            try {
+                const response = await fetch('/.netlify/functions/testConnection');
+                const data = await response.json();
+                showResult(data, response.status === 200);
+            } catch (error) {
+                showError(`Network Error: ${error.message}`);
+            }
+        }
+        
+        async function testSimple() {
+            showLoading('Đang test connection đơn giản...');
+            try {
+                const response = await fetch('/.netlify/functions/simpleTest');
+                const data = await response.json();
+                showResult(data, response.status === 200);
+            } catch (error) {
+                showError(`Network Error: ${error.message}`);
+            }
+        }
+        
+        async function testAPI() {
+            showLoading('Đang test main API health...');
+            try {
+                const response = await fetch('/api/health');
+                const data = await response.json();
+                showResult(data, response.status === 200);
+            } catch (error) {
+                showError(`API Error: ${error.message}`);
+            }
+        }
+        
+        function showLoading(message) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = `<div class="result loading">⏳ ${message}</div>`;
+        }
+        
+        function showResult(data, success) {
+            const resultDiv = document.getElementById('result');
+            const className = success ? 'result' : 'result error';
+            
+            let content = JSON.stringify(data, null, 2);
+            
+            // Pretty format logs if available
+            if (data.logs && Array.isArray(data.logs)) {
+                content = data.logs.join('\n') + '\n\n' + 
+                         'Raw Response:\n' + JSON.stringify(data, null, 2);
+            }
+            
+            resultDiv.innerHTML = `
+                <div class="${className}">
+                    <strong>${success ? '✅ SUCCESS' : '❌ ERROR'}</strong>
+                    <div class="logs">${content}</div>
+                </div>
+            `;
+        }
+        
+        function showError(message) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = `<div class="result error">❌ ${message}</div>`;
+        }
+        
+        // Auto-run simple test on page load
+        window.addEventListener('load', () => {
+            setTimeout(testSimple, 1000);
+        });
+    </script>
+</body>
+</html>
