@@ -1,36 +1,15 @@
-// netlify/functions/server.js - Netlify Function wrapper
-const serverless = require('serverless-http');
-const express = require('express');
+// netlify/functions/server.js - Main API handler 
 const mongoose = require('mongoose');
-const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-const app = express();
-
-// Middleware
-app.use(cors({
-  origin: true,
-  credentials: true
-}));
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
-// Path rewriting middleware for Netlify
-app.use((req, res, next) => {
-  // Netlify :splat passes path without leading slash for nested paths
-  if (req.url && !req.url.startsWith('/')) {
-    req.url = '/' + req.url;
-  }
-  next();
-});
-
-// MongoDB connection with error handling
+// MongoDB connection with caching
 let isConnected = false;
+let cachedDb = null;
 
 const connectToDatabase = async () => {
-  if (isConnected) {
-    return;
+  if (isConnected && cachedDb) {
+    return cachedDb;
   }
 
   try {
@@ -45,7 +24,9 @@ const connectToDatabase = async () => {
     });
     
     isConnected = true;
+    cachedDb = mongoose.connection;
     console.log('📊 MongoDB connected successfully');
+    return cachedDb;
   } catch (error) {
     console.error('❌ MongoDB connection error:', error);
     throw error;
@@ -58,7 +39,7 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   displayName: { type: String },
-  avatar: { type: String }, // base64 encoded image
+  avatar: { type: String },
   preferences: {
     theme: { type: String, default: 'dark' },
     volume: { type: Number, default: 0.8 },
@@ -70,82 +51,64 @@ const userSchema = new mongoose.Schema({
 const trackSchema = new mongoose.Schema({
   title: { type: String, required: true },
   artist: { type: String, required: true },
-  album: { type: String },
-  genre: { type: String },
+  audioData: { type: String, required: true }, // base64 audio
   duration: { type: Number },
-  filePath: { type: String }, // For Netlify, this might be a cloud URL
   isPublic: { type: Boolean, default: false },
   playCount: { type: Number, default: 0 },
-  uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }
 }, { timestamps: true });
 
-const User = mongoose.model('User', userSchema);
-const Track = mongoose.model('Track', trackSchema);
+// Models
+const User = mongoose.models.User || mongoose.model('User', userSchema);
+const Track = mongoose.models.Track || mongoose.model('Track', trackSchema);
 
-// JWT Authentication Middleware
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1] || req.query.token;
-
+// JWT verification middleware
+const authenticateToken = (token) => {
   if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
+    throw new Error('No token provided');
   }
-
-  jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret', (err, user) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid or expired token' });
-    }
-    req.user = user;
-    next();
-  });
+  
+  const JWT_SECRET = process.env.JWT_SECRET;
+  if (!JWT_SECRET) {
+    throw new Error('JWT_SECRET not configured');
+  }
+  
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch (error) {
+    throw new Error('Invalid token');
+  }
 };
 
-// Health check with database connection
-app.get('/health', async (req, res) => {
-  try {
-    await connectToDatabase();
-    res.json({ 
-      status: 'OK', 
-      message: 'FlowPlay API is running on Netlify!',
-      database: isConnected ? 'Connected' : 'Disconnected',
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      status: 'Error', 
-      message: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
+// Route handlers
+const handlers = {
+  // Health check
+  'GET /health': async () => ({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    service: 'FlowPlay API Server',
+    database: isConnected ? 'connected' : 'disconnected'
+  }),
 
-// Auth Routes
-app.post('/auth/register', async (req, res) => {
-  try {
-    await connectToDatabase();
+  // Auth routes
+  'POST /auth/register': async (event) => {
+    const { username, email, password, displayName } = JSON.parse(event.body);
     
-    const { username, email, password, displayName } = req.body;
-
     if (!username || !email || !password) {
-      return res.status(400).json({ error: 'Missing required fields' });
+      throw new Error('Username, email và password là bắt buộc');
     }
 
-    // Check if user exists
-    const existingUser = await User.findOne({
-      $or: [{ email }, { username }]
+    const existingUser = await User.findOne({ 
+      $or: [{ email }, { username }] 
     });
     
     if (existingUser) {
-      return res.status(400).json({ 
-        error: existingUser.email === email ? 'Email đã được sử dụng' : 'Username đã được sử dụng' 
-      });
+      throw new Error('Email hoặc username đã được sử dụng');
     }
 
-    // Hash password
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // Create user
     const user = new User({
       username,
       email,
@@ -155,15 +118,14 @@ app.post('/auth/register', async (req, res) => {
 
     await user.save();
 
-    // Generate JWT
     const token = jwt.sign(
       { userId: user._id, username: user.username },
-      process.env.JWT_SECRET || 'fallback-secret',
+      process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
 
-    res.status(201).json({
-      message: 'User created successfully',
+    return {
+      message: 'Đăng ký thành công!',
       token,
       user: {
         id: user._id,
@@ -171,48 +133,37 @@ app.post('/auth/register', async (req, res) => {
         email: user.email,
         displayName: user.displayName
       }
-    });
-    
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ error: 'Internal server error: ' + error.message });
-  }
-});
+    };
+  },
 
-app.post('/auth/login', async (req, res) => {
-  try {
-    await connectToDatabase();
+  'POST /auth/login': async (event) => {
+    const { username, password } = JSON.parse(event.body);
     
-    const { username, password } = req.body;
-
     if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password required' });
+      throw new Error('Username và password là bắt buộc');
     }
 
-    // Find user
     const user = await User.findOne({
       $or: [{ username }, { email: username }]
     });
 
     if (!user) {
-      return res.status(400).json({ error: 'Tài khoản không tồn tại' });
+      throw new Error('Tài khoản không tồn tại');
     }
 
-    // Check password
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(400).json({ error: 'Mật khẩu không đúng' });
+      throw new Error('Mật khẩu không đúng');
     }
 
-    // Generate JWT
     const token = jwt.sign(
       { userId: user._id, username: user.username },
-      process.env.JWT_SECRET || 'fallback-secret',
+      process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
 
-    res.json({
-      message: 'Login successful',
+    return {
+      message: 'Đăng nhập thành công!',
       token,
       user: {
         id: user._id,
@@ -222,94 +173,115 @@ app.post('/auth/login', async (req, res) => {
         avatar: user.avatar,
         preferences: user.preferences
       }
-    });
+    };
+  },
+
+  // User routes
+  'GET /user/profile': async (event) => {
+    const token = event.headers.authorization?.replace('Bearer ', '');
+    const decoded = authenticateToken(token);
     
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Internal server error: ' + error.message });
-  }
-});
-
-// User Routes
-app.get('/user/profile', authenticateToken, async (req, res) => {
-  try {
-    await connectToDatabase();
-    const user = await User.findById(req.user.userId).select('-password');
+    const user = await User.findById(decoded.userId).select('-password');
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      throw new Error('User not found');
     }
-    res.json({ user });
-  } catch (error) {
-    console.error('Get profile error:', error);
-    res.status(500).json({ error: 'Internal server error: ' + error.message });
-  }
-});
 
-app.put('/user/profile', authenticateToken, async (req, res) => {
-  try {
-    await connectToDatabase();
-    const updates = req.body;
+    return { user };
+  },
+
+  'PUT /user/profile': async (event) => {
+    const token = event.headers.authorization?.replace('Bearer ', '');
+    const decoded = authenticateToken(token);
+    const updates = JSON.parse(event.body);
+
     const user = await User.findByIdAndUpdate(
-      req.user.userId,
-      updates,
-      { new: true, runValidators: true }
+      decoded.userId, 
+      updates, 
+      { new: true }
     ).select('-password');
-    
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
-    res.json({ message: 'Profile updated successfully', user });
-  } catch (error) {
-    console.error('Update profile error:', error);
-    res.status(500).json({ error: 'Internal server error: ' + error.message });
-  }
-});
 
-// Track Routes
-app.get('/tracks/my', authenticateToken, async (req, res) => {
-  try {
-    await connectToDatabase();
-    const tracks = await Track.find({ uploadedBy: req.user.userId }).sort({ createdAt: -1 });
-    res.json({ tracks });
-  } catch (error) {
-    console.error('Get my tracks error:', error);
-    res.status(500).json({ error: 'Internal server error: ' + error.message });
-  }
-});
+    return { user };
+  },
 
-app.get('/tracks/public', async (req, res) => {
-  try {
-    await connectToDatabase();
-    const { search, genre, limit = 20 } = req.query;
+  // Track routes
+  'GET /tracks/my': async (event) => {
+    const token = event.headers.authorization?.replace('Bearer ', '');
+    const decoded = authenticateToken(token);
     
-    const query = { isPublic: true };
-    
-    if (search) {
-      query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { artist: { $regex: search, $options: 'i' } },
-        { album: { $regex: search, $options: 'i' } }
-      ];
-    }
-    
-    if (genre) {
-      query.genre = genre;
-    }
-    
-    const tracks = await Track.find(query)
-      .populate('uploadedBy', 'username displayName')
+    const tracks = await Track.find({ userId: decoded.userId });
+    return { tracks };
+  },
+
+  'GET /tracks/public': async () => {
+    const tracks = await Track.find({ isPublic: true })
+      .populate('userId', 'username displayName')
       .sort({ createdAt: -1 })
-      .limit(parseInt(limit));
-      
-    res.json({ tracks });
-  } catch (error) {
-    console.error('Get public tracks error:', error);
-    res.status(500).json({ error: 'Internal server error: ' + error.message });
+      .limit(50);
+    return { tracks };
   }
-});
+};
 
-// Export handler for Netlify
-const handler = serverless(app);
+// Main handler
+exports.handler = async (event, context) => {
+  try {
+    // Set CORS headers
+    const headers = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Content-Type': 'application/json'
+    };
 
-module.exports = { handler };
+    // Handle preflight OPTIONS request
+    if (event.httpMethod === 'OPTIONS') {
+      return {
+        statusCode: 200,
+        headers,
+        body: ''
+      };
+    }
+
+    // Connect to database
+    await connectToDatabase();
+
+    // Parse path - Netlify passes the splat portion
+    const path = event.path || ('/' + (event.pathParameters?.proxy || ''));
+    const method = event.httpMethod;
+    const route = `${method} ${path}`;
+
+    console.log(`🔍 API Request: ${route}`);
+
+    // Find handler
+    const handler = handlers[route];
+    if (!handler) {
+      return {
+        statusCode: 404,
+        headers,
+        body: JSON.stringify({ error: `Route not found: ${route}` })
+      };
+    }
+
+    // Execute handler
+    const result = await handler(event);
+
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify(result)
+    };
+
+  } catch (error) {
+    console.error('❌ API Error:', error);
+    
+    return {
+      statusCode: error.message.includes('không tồn tại') ? 400 : 500,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ 
+        error: error.message 
+      })
+    };
+  }
+};
