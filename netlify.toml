@@ -10,6 +10,19 @@
 
 # Redirects and rewrites
 [[redirects]]
+  # Auth login - dedicated function
+  from = "/api/auth/login"
+  to = "/.netlify/functions/auth-login"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/auth/register"
+  to = "/.netlify/functions/server/auth/register"
+  status = 200
+  force = true
+
+[[redirects]]
   # Health endpoint - specific function
   from = "/api/health"
   to = "/.netlify/functions/api-health"
