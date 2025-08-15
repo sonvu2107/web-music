@@ -1,14 +1,12 @@
 // netlify/functions/auth-login.js - Dedicated login function
 const { MongoClient, ObjectId } = require('mongodb');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-
-// MongoDB connection với lazy loading
-let isConnected = false;
-let cachedClient = null;
 
 const MONGODB_URI = process.env.MONGODB_URI;
-const DATABASE_NAME = 'test'; // Thay đổi database name
+const DATABASE_NAME = 'test';
+
+let isConnected = false;
+let cachedClient = null;
 
 const connectToDatabase = async () => {
   if (isConnected && cachedClient) {
@@ -35,63 +33,68 @@ const connectToDatabase = async () => {
   }
 };
 
-// User Schema
-const userSchema = new mongoose.Schema({
-  username: { type: String, required: true, unique: true },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  displayName: { type: String, default: '' },
-  avatar: { type: String, default: '' },
-  createdAt: { type: Date, default: Date.now },
-  lastLogin: { type: Date, default: Date.now },
-  preferences: {
-    theme: { type: String, default: 'dark' },
-    volume: { type: Number, default: 0.8 },
-    repeat: { type: String, default: 'none' },
-    shuffle: { type: Boolean, default: false }
-  }
-});
-
-const User = mongoose.models.User || mongoose.model('User', userSchema);
-
-// Main handler
 exports.handler = async (event, context) => {
-  try {
-    // Set CORS headers
-    const headers = {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Content-Type': 'application/json'
+  console.log('=== AUTH LOGIN FUNCTION ===');
+  console.log('Database:', DATABASE_NAME);
+  console.log('Method:', event.httpMethod);
+  
+  const headers = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Content-Type': 'application/json'
+  };
+
+  // Handle preflight OPTIONS request
+  if (event.httpMethod === 'OPTIONS') {
+    return {
+      statusCode: 200,
+      headers,
+      body: ''
     };
+  }
 
-    // Handle preflight OPTIONS request
-    if (event.httpMethod === 'OPTIONS') {
-      return {
-        statusCode: 200,
-        headers,
-        body: ''
-      };
-    }
+  // Only handle POST requests
+  if (event.httpMethod !== 'POST') {
+    return {
+      statusCode: 405,
+      headers,
+      body: JSON.stringify({ error: 'Method not allowed' })
+    };
+  }
 
-    // Only handle POST requests
-    if (event.httpMethod !== 'POST') {
+  let client;
+
+  try {
+    // Parse request body
+    const requestBody = JSON.parse(event.body);
+    const { username, password } = requestBody;
+    
+    console.log('Login attempt for:', username);
+
+    if (!username || !password) {
       return {
-        statusCode: 405,
+        statusCode: 400,
         headers,
-        body: JSON.stringify({ error: 'Method not allowed' })
+        body: JSON.stringify({ error: 'Username và password là bắt buộc' })
       };
     }
 
     // Connect to database
-    const client = await connectToDatabase();
-    const db = client.db(test); // Sử dụng database 'test'
+    client = await connectToDatabase();
+    const db = client.db(DATABASE_NAME);
+    const usersCollection = db.collection('users');
 
-    const { username, password } = JSON.parse(event.body);
+    // Find user by username or email
+    const user = await usersCollection.findOne({
+      $or: [
+        { username: username.toLowerCase() },
+        { email: username.toLowerCase() }
+      ]
+    });
 
-    // Find user
-    const user = await User.findOne({ $or: [{ username }, { email: username }] });
     if (!user) {
+      console.log('User not found:', username);
       return {
         statusCode: 400,
         headers,
@@ -99,9 +102,12 @@ exports.handler = async (event, context) => {
       };
     }
 
+    console.log('User found:', user.username);
+
     // Check password
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
+      console.log('Password mismatch for user:', username);
       return {
         statusCode: 400,
         headers,
@@ -109,44 +115,64 @@ exports.handler = async (event, context) => {
       };
     }
 
-    // Update last login
-    user.lastLogin = new Date();
-    await user.save();
-
-    // Generate JWT
-    const JWT_SECRET = process.env.JWT_SECRET || 'flowplay_secret_key_2025';
-    const token = jwt.sign(
-      { userId: user._id, username: user.username },
-      JWT_SECRET,
-      { expiresIn: '7d' }
+    // Generate simple token
+    const token = `token_${user._id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Update user with token and lastLogin
+    await usersCollection.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          token: token,
+          lastLogin: new Date(),
+          tokenCreatedAt: new Date()
+        }
+      }
     );
+
+    console.log('Login successful for:', user.username);
 
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
+        success: true,
         message: 'Đăng nhập thành công!',
-        token,
+        token: token,
         user: {
           id: user._id,
           username: user.username,
           email: user.email,
-          displayName: user.displayName,
-          avatar: user.avatar,
-          preferences: user.preferences
-        }
+          displayName: user.displayName || user.username,
+          avatar: user.avatar || '',
+          preferences: user.preferences || {
+            theme: 'dark',
+            volume: 0.8,
+            repeat: 'none',
+            shuffle: false
+          }
+        },
+        database: DATABASE_NAME,
+        timestamp: new Date().toISOString()
       })
     };
 
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('=== LOGIN ERROR ===');
+    console.error('Error:', error.message);
+    console.error('Stack:', error.stack);
+
     return {
       statusCode: 500,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ error: 'Server error' })
+      headers,
+      body: JSON.stringify({
+        error: 'Server error',
+        message: error.message,
+        database: DATABASE_NAME,
+        timestamp: new Date().toISOString()
+      })
     };
+  } finally {
+    console.log('Login function completed');
   }
 };

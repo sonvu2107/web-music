@@ -1,7 +1,7 @@
 {
   "dependencies": {
     "mongodb": "^6.0.0",
-    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
     "cloudinary": "^1.41.0",
     "busboy": "^1.6.0",
     "streamifier": "^0.1.1"
