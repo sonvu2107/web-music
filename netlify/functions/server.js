@@ -82,6 +82,14 @@ const authenticateToken = (token) => {
 
 // Route handlers
 const handlers = {
+  // Root handler
+  'GET /': async () => ({
+    message: 'FlowPlay API Server',
+    version: '3.0.0',
+    endpoints: ['/health', '/auth/register', '/auth/login', '/user/profile', '/tracks/my', '/tracks/public'],
+    timestamp: new Date().toISOString()
+  }),
+
   // Health check
   'GET /health': async () => ({
     status: 'healthy',
@@ -244,12 +252,36 @@ exports.handler = async (event, context) => {
     // Connect to database
     await connectToDatabase();
 
-    // Parse path - Netlify passes the splat portion
-    const path = event.path || ('/' + (event.pathParameters?.proxy || ''));
+    // Parse path - Handle Netlify :splat routing
+    // When /api/health redirects to /.netlify/functions/server/health
+    // Netlify passes "health" in event.path
+    let path = event.path || event.rawUrl || '';
+    
+    // Handle different Netlify path formats
+    if (event.pathParameters && event.pathParameters.proxy) {
+      path = '/' + event.pathParameters.proxy;
+    } else if (event.path && !event.path.startsWith('/')) {
+      path = '/' + event.path;
+    } else if (!path && event.rawUrl) {
+      // Extract path from rawUrl if needed
+      const urlParts = event.rawUrl.split('/.netlify/functions/server');
+      path = urlParts[1] || '/';
+    }
+    
+    // Default to root if no path
+    if (!path || path === '/') {
+      path = '/health'; // Default to health check
+    }
+    
     const method = event.httpMethod;
     const route = `${method} ${path}`;
 
-    console.log(`🔍 API Request: ${route}`);
+    console.log(`🔍 API Request: ${route}`, {
+      eventPath: event.path,
+      pathParameters: event.pathParameters,
+      rawUrl: event.rawUrl,
+      finalPath: path
+    });
 
     // Find handler
     const handler = handlers[route];
