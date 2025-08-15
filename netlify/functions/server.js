@@ -1,4 +1,4 @@
-// netlify/functions/server.js - Express server cho Netlify
+// netlify/functions/server.js
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -9,44 +9,30 @@ const serverless = require('serverless-http');
 const app = express();
 
 // Middleware
-app.use(cors({
-  origin: true,
-  credentials: true
-}));
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// MongoDB connection với lazy loading cho Netlify
+// MongoDB connection (lazy load for Netlify)
 let isConnected = false;
-
 const connectToDatabase = async () => {
-  if (isConnected) {
-    return;
-  }
-
+  if (isConnected) return;
   try {
-    const MONGODB_URI = process.env.MONGODB_URI;
-    if (!MONGODB_URI) {
-      throw new Error('MONGODB_URI environment variable is not set');
-    }
-
-    await mongoose.connect(MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-    
+    const uri = process.env.MONGODB_URI;
+    if (!uri) throw new Error('MONGODB_URI is not set');
+    await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
     isConnected = true;
     console.log('📊 MongoDB connected successfully');
-  } catch (error) {
-    console.error('❌ MongoDB connection error:', error);
-    throw error;
+  } catch (err) {
+    console.error('❌ MongoDB connection error:', err);
+    throw err;
   }
 };
 
 // User Schema
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
-  email: { type: String, required: true, unique: true },
+  email:    { type: String, required: true, unique: true },
   password: { type: String, required: true },
   displayName: { type: String, default: '' },
   avatar: { type: String, default: '' },
@@ -59,7 +45,6 @@ const userSchema = new mongoose.Schema({
     shuffle: { type: Boolean, default: false }
   }
 });
-
 const User = mongoose.models.User || mongoose.model('User', userSchema);
 
 // Track Schema
@@ -71,7 +56,7 @@ const trackSchema = new mongoose.Schema({
   genre: { type: String, default: '' },
   uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   fileName: { type: String, required: true },
-  audioData: { type: String, required: true }, // base64 cho Netlify
+  audioData: { type: String, required: true }, // base64
   fileSize: { type: Number, required: true },
   mimeType: { type: String, required: true },
   thumbnail: { type: String, default: '' },
@@ -82,7 +67,6 @@ const trackSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
-
 const Track = mongoose.models.Track || mongoose.model('Track', trackSchema);
 
 // JWT Secret
@@ -92,15 +76,8 @@ const JWT_SECRET = process.env.JWT_SECRET || 'flowplay_secret_key_2025';
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   let token = authHeader && authHeader.split(' ')[1];
-  
-  // If no token in header, check query parameter (for streaming)
-  if (!token) {
-    token = req.query.token;
-  }
-
-  if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
+  if (!token) token = req.query.token;
+  if (!token) return res.status(401).json({ error: 'Access token required' });
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) return res.status(403).json({ error: 'Invalid token' });
@@ -109,84 +86,47 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// Database middleware - connect before each request (optional)
+// Ensure DB connected for each request
 app.use(async (req, res, next) => {
   try {
-    if (!isConnected) {
-      await connectToDatabase();
-    }
+    if (!isConnected) await connectToDatabase();
     next();
-  } catch (error) {
-    console.error('Database connection failed:', error);
-    // Don't block the request, continue anyway
+  } catch (err) {
+    console.error('Database connection failed:', err);
     next();
   }
 });
 
-// Root route for testing
+// Root route
 app.get('/', (req, res) => {
-  res.json({
-    message: 'FlowPlay API Server',
-    timestamp: new Date().toISOString(),
-    status: 'running'
-  });
+  res.json({ message: 'FlowPlay API Server', timestamp: new Date().toISOString(), status: 'running' });
 });
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
+  res.json({
+    status: 'OK',
     timestamp: new Date().toISOString(),
     mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     service: 'FlowPlay Express API'
   });
 });
 
-// Auth Routes
+// Auth routes
 app.post('/auth/register', async (req, res) => {
   try {
     const { username, email, password, displayName } = req.body;
-
-    // Check if user exists
     const existingUser = await User.findOne({ $or: [{ username }, { email }] });
-    if (existingUser) {
-      return res.status(400).json({ error: 'Username or email already exists' });
-    }
+    if (existingUser) return res.status(400).json({ error: 'Username or email already exists' });
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create user
-    const user = new User({
-      username,
-      email,
-      password: hashedPassword,
-      displayName: displayName || username
-    });
-
+    const user = new User({ username, email, password: hashedPassword, displayName: displayName || username });
     await user.save();
 
-    // Generate JWT
-    const token = jwt.sign(
-      { userId: user._id, username: user.username },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    res.status(201).json({
-      message: 'User created successfully',
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        displayName: user.displayName,
-        avatar: user.avatar,
-        preferences: user.preferences
-      }
-    });
-  } catch (error) {
-    console.error('Register error:', error);
+    const token = jwt.sign({ userId: user._id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
+    res.status(201).json({ message: 'User created successfully', token, user });
+  } catch (err) {
+    console.error('Register error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -194,112 +134,96 @@ app.post('/auth/register', async (req, res) => {
 app.post('/auth/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-
-    // Find user
     const user = await User.findOne({ $or: [{ username }, { email: username }] });
-    if (!user) {
-      return res.status(400).json({ error: 'Tài khoản không tồn tại' });
-    }
+    if (!user) return res.status(400).json({ error: 'Tài khoản không tồn tại' });
 
-    // Check password
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(400).json({ error: 'Mật khẩu không đúng' });
-    }
+    if (!isMatch) return res.status(400).json({ error: 'Mật khẩu không đúng' });
 
-    // Update last login
     user.lastLogin = new Date();
     await user.save();
 
-    // Generate JWT
-    const token = jwt.sign(
-      { userId: user._id, username: user.username },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    res.json({
-      message: 'Đăng nhập thành công!',
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        displayName: user.displayName,
-        avatar: user.avatar,
-        preferences: user.preferences
-      }
-    });
-  } catch (error) {
-    console.error('Login error:', error);
+    const token = jwt.sign({ userId: user._id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ message: 'Đăng nhập thành công!', token, user });
+  } catch (err) {
+    console.error('Login error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// Track Routes
+// Track routes
 app.get('/tracks/my-tracks', authenticateToken, async (req, res) => {
   try {
-    const tracks = await Track.find({ uploadedBy: req.user.userId })
-      .sort({ createdAt: -1 });
-
+    const tracks = await Track.find({ uploadedBy: req.user.userId }).sort({ createdAt: -1 });
     res.json({ tracks });
-  } catch (error) {
-    console.error('Get tracks error:', error);
+  } catch (err) {
+    console.error('Get my tracks error:', err);
     res.status(500).json({ error: 'Failed to fetch tracks' });
   }
 });
 
-// Public tracks endpoint
 app.get('/tracks/public', async (req, res) => {
   try {
     const { page = 1, limit = 20, genre, search } = req.query;
-    
     let query = { isPublic: true };
-    
-    if (genre) {
-      query.genre = { $regex: genre, $options: 'i' };
-    }
-    
+    if (genre) query.genre = { $regex: genre, $options: 'i' };
     if (search) {
-      query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { artist: { $regex: search, $options: 'i' } }
-      ];
+      query.$or = [{ title: { $regex: search, $options: 'i' } }, { artist: { $regex: search, $options: 'i' } }];
     }
-
     const tracks = await Track.find(query)
       .populate('uploadedBy', 'username displayName')
       .sort({ createdAt: -1 })
-      .limit(limit * 1)
+      .limit(Number(limit))
       .skip((page - 1) * limit);
 
     const total = await Track.countDocuments(query);
-
-    res.json({
-      tracks,
-      pagination: {
-        current: page,
-        pages: Math.ceil(total / limit),
-        total
-      }
-    });
-  } catch (error) {
-    console.error('Get public tracks error:', error);
+    res.json({ tracks, pagination: { current: page, pages: Math.ceil(total / limit), total } });
+  } catch (err) {
+    console.error('Get public tracks error:', err);
     res.status(500).json({ error: 'Failed to fetch tracks' });
   }
 });
 
-// User Routes
+// Upload route
+app.post('/tracks/upload', authenticateToken, async (req, res) => {
+  try {
+    const { title, artist, album, duration, genre, audioData, fileName, fileSize, mimeType, thumbnail, isPublic } = req.body;
+    if (!title || !artist || !audioData) {
+      return res.status(400).json({ error: 'Thiếu thông tin hoặc file nhạc' });
+    }
+
+    const track = new Track({
+      title,
+      artist,
+      album: album || '',
+      duration: duration || 0,
+      genre: genre || '',
+      uploadedBy: req.user.userId,
+      fileName: fileName || 'unknown',
+      fileSize: fileSize || 0,
+      mimeType: mimeType || 'audio/mpeg',
+      audioData,
+      thumbnail: thumbnail || '',
+      isPublic: isPublic || false,
+      sourceType: 'upload',
+    });
+
+    await track.save();
+    res.status(201).json({ message: 'Upload thành công!', track });
+  } catch (err) {
+    console.error('Upload track error:', err);
+    res.status(500).json({ error: 'Lỗi server', details: err.message });
+  }
+});
+
+// User routes
 app.get('/user/profile', authenticateToken, async (req, res) => {
   try {
     const user = await User.findById(req.user.userId).select('-password');
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
+    if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({ user });
-  } catch (error) {
-    console.error('Profile error:', error);
+  } catch (err) {
+    console.error('Profile error:', err);
     res.status(500).json({ error: 'Failed to fetch profile' });
   }
 });
@@ -307,109 +231,23 @@ app.get('/user/profile', authenticateToken, async (req, res) => {
 app.put('/user/profile', authenticateToken, async (req, res) => {
   try {
     const { displayName, preferences } = req.body;
-    
     const user = await User.findById(req.user.userId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
     if (displayName) user.displayName = displayName;
     if (preferences) user.preferences = { ...user.preferences, ...preferences };
-    user.updatedAt = new Date();
-
     await user.save();
 
-    res.json({
-      message: 'Profile updated successfully',
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        displayName: user.displayName,
-        avatar: user.avatar,
-        preferences: user.preferences
-      }
-    });
-  } catch (error) {
-    console.error('Update profile error:', error);
+    res.json({ message: 'Profile updated successfully', user });
+  } catch (err) {
+    console.error('Update profile error:', err);
     res.status(500).json({ error: 'Failed to update profile' });
   }
 });
 
-// Thêm route upload sau các route tracks khác:
-app.post('/tracks/upload', authenticateToken, async (req, res) => {
-  try {
-    const { title, artist, album, duration, genre, audioData, fileName, fileSize, mimeType, thumbnail, isPublic } = req.body;
-
-    if (!title || !artist) {
-      return res.status(400).json({ error: 'Thiếu thông tin bài hát (title, artist)' });
-    }
-
-    // For Netlify Functions, we can't store files locally
-    // This is a placeholder implementation
-    if (audioData) {
-      // In production, would upload to Cloudinary/AWS S3
-      const track = {
-        title,
-        artist,
-        album: album || '',
-        duration: duration || 0,
-        genre: genre || '',
-        uploadedBy: req.user.userId,
-        fileName: fileName || 'unknown',
-        fileSize: fileSize || 0,
-        mimeType: mimeType || 'audio/mpeg',
-        thumbnail: thumbnail || '',
-        isPublic: isPublic || false,
-        sourceType: 'upload',
-        createdAt: new Date()
-      };
-
-      // Save to MongoDB (simplified for now)
-      const db = await connectToDatabase();
-      const result = await db.collection('tracks').insertOne(track);
-
-      return res.status(201).json({
-        message: 'Upload thành công!',
-        track: {
-          id: result.insertedId,
-          ...track
-        }
-      });
-    } else {
-      return res.status(501).json({
-        error: 'Upload chưa được hỗ trợ',
-        message: 'Tính năng upload nhạc đang được phát triển. Hiện tại bạn có thể nghe nhạc từ Discovery.',
-        suggestion: 'Hãy thử tính năng Discovery để tìm và nghe nhạc miễn phí!'
-      });
-    }
-
-  } catch (error) {
-    console.error('Upload track error:', error);
-    return res.status(500).json({ 
-      error: 'Lỗi server', 
-      message: 'Có lỗi xảy ra khi upload. Vui lòng thử lại sau.' 
-    });
-  }
-});
-
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error('Server error:', err);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: err.message
-  });
-});
-
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({
-    error: 'Route not found',
-    path: req.path,
-    method: req.method
-  });
+  res.status(404).json({ error: 'Route not found', path: req.path, method: req.method });
 });
 
-// Export handler for Netlify - ĐÂY LÀ KEY!
 module.exports.handler = serverless(app);
