@@ -300,5 +300,9 @@ app.get('/tracks/public', async (req, res) => {
   }
 });
 
-// Export handler for Netlify
-module.exports.handler = serverless(app);
+// Export handler for Netlify with proper configuration
+const handler = serverless(app, {
+  basePath: '/api'
+});
+
+module.exports = { handler };
