@@ -10,7 +10,7 @@
 
 # Redirects and rewrites
 [[redirects]]
-  # Auth login - dedicated function
+  # Auth endpoints
   from = "/api/auth/login"
   to = "/.netlify/functions/auth-login"
   status = 200
@@ -23,14 +23,34 @@
   force = true
 
 [[redirects]]
-  # Health endpoint - specific function
+  # Tracks endpoints - dedicated functions
+  from = "/api/tracks/public"
+  to = "/.netlify/functions/tracks-public"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/tracks/my-tracks"
+  to = "/.netlify/functions/tracks-my-tracks"
+  status = 200
+  force = true
+
+[[redirects]]
+  # User endpoints - dedicated function
+  from = "/api/user/profile"
+  to = "/.netlify/functions/user-profile"
+  status = 200
+  force = true
+
+[[redirects]]
+  # Health endpoint
   from = "/api/health"
   to = "/.netlify/functions/api-health"
   status = 200
   force = true
 
 [[redirects]]
-  # Other API routes should go to main server function
+  # Other API routes - fallback to server function
   from = "/api/*"
   to = "/.netlify/functions/server/:splat"
   status = 200
