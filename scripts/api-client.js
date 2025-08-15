@@ -114,29 +114,45 @@ class ApiClient {
   }
 
   // Track methods
-  async uploadTrack(formData) {
-    try {
-      const url = `${this.baseURL}/tracks/upload`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.token}`
-        },
-        body: formData // Don't set Content-Type for FormData
-      });
+async uploadTrack(formData) {
+  try {
+    console.log('🚀 Starting upload...');
+    const url = `${this.baseURL}/tracks/upload`;
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.token}`
+        // Không set Content-Type cho FormData
+      },
+      body: formData
+    });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || `Upload failed: ${response.status}`);
-      }
-
-      return data;
-    } catch (error) {
-      console.error('Upload failed:', error);
-      throw error;
+    // Kiểm tra content-type trước khi parse
+    const contentType = response.headers.get('content-type');
+    const isJson = contentType && contentType.includes('application/json');
+    
+    let data;
+    if (isJson) {
+      data = await response.json();
+    } else {
+      // Server trả về HTML/text thay vì JSON
+      const text = await response.text();
+      console.error('Server returned non-JSON response:', text);
+      throw new Error(`Server error: ${response.status} - Upload failed. Server returned: ${text.slice(0, 100)}`);
     }
+
+    if (!response.ok) {
+      throw new Error(data.error || data.message || `Upload failed: ${response.status}`);
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Upload failed:', error);
+    throw error;
   }
+}
+
 
   async getMyTracks() {
     return await this.apiCall('/tracks/my-tracks');
