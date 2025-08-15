@@ -336,6 +336,63 @@ app.put('/user/profile', authenticateToken, async (req, res) => {
   }
 });
 
+// Thêm route upload sau các route tracks khác:
+app.post('/tracks/upload', authenticateToken, async (req, res) => {
+  try {
+    const { title, artist, album, duration, genre, audioData, fileName, fileSize, mimeType, thumbnail, isPublic } = req.body;
+
+    if (!title || !artist) {
+      return res.status(400).json({ error: 'Thiếu thông tin bài hát (title, artist)' });
+    }
+
+    // For Netlify Functions, we can't store files locally
+    // This is a placeholder implementation
+    if (audioData) {
+      // In production, would upload to Cloudinary/AWS S3
+      const track = {
+        title,
+        artist,
+        album: album || '',
+        duration: duration || 0,
+        genre: genre || '',
+        uploadedBy: req.user.userId,
+        fileName: fileName || 'unknown',
+        fileSize: fileSize || 0,
+        mimeType: mimeType || 'audio/mpeg',
+        thumbnail: thumbnail || '',
+        isPublic: isPublic || false,
+        sourceType: 'upload',
+        createdAt: new Date()
+      };
+
+      // Save to MongoDB (simplified for now)
+      const db = await connectToDatabase();
+      const result = await db.collection('tracks').insertOne(track);
+
+      return res.status(201).json({
+        message: 'Upload thành công!',
+        track: {
+          id: result.insertedId,
+          ...track
+        }
+      });
+    } else {
+      return res.status(501).json({
+        error: 'Upload chưa được hỗ trợ',
+        message: 'Tính năng upload nhạc đang được phát triển. Hiện tại bạn có thể nghe nhạc từ Discovery.',
+        suggestion: 'Hãy thử tính năng Discovery để tìm và nghe nhạc miễn phí!'
+      });
+    }
+
+  } catch (error) {
+    console.error('Upload track error:', error);
+    return res.status(500).json({ 
+      error: 'Lỗi server', 
+      message: 'Có lỗi xảy ra khi upload. Vui lòng thử lại sau.' 
+    });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Server error:', err);

@@ -36,12 +36,6 @@
   force = true
 
 [[redirects]]
-  from = "/api/tracks/upload"
-  to = "/.netlify/functions/tracks-upload"
-  status = 200
-  force = true
-
-[[redirects]]
   # User endpoints - dedicated function
   from = "/api/user/profile"
   to = "/.netlify/functions/user-profile"
@@ -55,8 +49,8 @@
   status = 200
   force = true
 
+# All other API routes including /tracks/upload go to server function
 [[redirects]]
-  # Other API routes - fallback to server function
   from = "/api/*"
   to = "/.netlify/functions/server/:splat"
   status = 200
