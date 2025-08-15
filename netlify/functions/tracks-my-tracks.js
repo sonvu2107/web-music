@@ -1,11 +1,8 @@
-// netlify/functions/tracks-my-tracks.js - User's tracks endpoint
 const { MongoClient, ObjectId } = require('mongodb');
-const jwt = require('jsonwebtoken');
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const DATABASE_NAME = 'test';
 
-// MongoDB connection với lazy loading
 let isConnected = false;
 let cachedClient = null;
 
@@ -34,26 +31,11 @@ const connectToDatabase = async () => {
   }
 };
 
-// JWT verification
-const authenticateToken = (token) => {
-  if (!token) {
-    throw new Error('No token provided');
-  }
-  
-  const JWT_SECRET = process.env.JWT_SECRET || 'flowplay_secret_key_2025';
-  try {
-    return jwt.verify(token, JWT_SECRET);
-  } catch (error) {
-    throw new Error('Invalid token');
-  }
-};
-
-// Main handler
 exports.handler = async (event, context) => {
   console.log('=== MY TRACKS FUNCTION ===');
   console.log('Database:', DATABASE_NAME);
+  console.log('Method:', event.httpMethod);
 
-  // Set CORS headers
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
@@ -63,7 +45,11 @@ exports.handler = async (event, context) => {
 
   // Handle preflight OPTIONS request
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' };
+    return {
+      statusCode: 200,
+      headers,
+      body: ''
+    };
   }
 
   // Only handle GET requests
@@ -80,6 +66,8 @@ exports.handler = async (event, context) => {
   try {
     // Check authorization
     const authHeader = event.headers.authorization || event.headers.Authorization;
+    console.log('Auth header:', authHeader ? 'Present' : 'Missing');
+    
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return {
         statusCode: 401,
@@ -89,9 +77,7 @@ exports.handler = async (event, context) => {
     }
 
     const token = authHeader.split(' ')[1];
-
-    // Verify token
-    const decoded = authenticateToken(token);
+    console.log('Token extracted:', token.substring(0, 10) + '...');
 
     // Connect to database
     client = await connectToDatabase();
@@ -99,9 +85,12 @@ exports.handler = async (event, context) => {
     const usersCollection = db.collection('users');
     const tracksCollection = db.collection('tracks');
 
-    // Verify user
+    // Verify user token
+    console.log('Verifying user token...');
     const user = await usersCollection.findOne({ token });
+    
     if (!user) {
+      console.log('User not found with token');
       return {
         statusCode: 401,
         headers,
@@ -109,14 +98,32 @@ exports.handler = async (event, context) => {
       };
     }
 
-    console.log('Getting tracks for user:', user.username);
+    console.log('User verified:', user.username);
+
+    // Parse query parameters
+    const params = event.queryStringParameters || {};
+    const page = parseInt(params.page || '1');
+    const limit = parseInt(params.limit || '20');
+    const skip = (page - 1) * limit;
+
+    console.log('Getting tracks for user:', user.username, 'Page:', page);
 
     // Get user's tracks
     const tracks = await tracksCollection
       .find({ userId: user._id })
       .sort({ uploadDate: -1 })
+      .skip(skip)
+      .limit(limit)
+      .project({
+        audioData: 0 // Exclude heavy field
+      })
       .toArray();
 
+    const total = await tracksCollection.countDocuments({ userId: user._id });
+
+    console.log(`Found ${tracks.length} tracks for user (${total} total)`);
+
+    // Format tracks for response
     const formattedTracks = tracks.map(track => ({
       id: track._id,
       title: track.title,
@@ -126,10 +133,19 @@ exports.handler = async (event, context) => {
       genre: track.genre || '',
       fileName: track.fileName || '',
       fileSize: track.fileSize || 0,
+      mimeType: track.mimeType || 'audio/mpeg',
       isPublic: track.isPublic || false,
+      status: track.status || 'uploaded',
       playCount: track.playCount || 0,
+      likeCount: track.likeCount || 0,
       uploadDate: track.uploadDate,
-      status: track.status || 'uploaded'
+      // Format dates for display
+      uploadedAt: track.uploadDate ? 
+        new Date(track.uploadDate).toLocaleString('vi-VN') : '',
+      // Add duration format (seconds to mm:ss)
+      durationFormatted: track.duration ? 
+        `${Math.floor(track.duration / 60)}:${(track.duration % 60).toString().padStart(2, '0')}` : 
+        '0:00'
     }));
 
     return {
@@ -138,7 +154,19 @@ exports.handler = async (event, context) => {
       body: JSON.stringify({
         success: true,
         tracks: formattedTracks,
-        totalTracks: tracks.length,
+        user: {
+          id: user._id,
+          username: user.username,
+          displayName: user.displayName || user.username
+        },
+        pagination: {
+          currentPage: page,
+          totalPages: Math.ceil(total / limit),
+          totalTracks: total,
+          limit: limit,
+          hasNext: page < Math.ceil(total / limit),
+          hasPrev: page > 1
+        },
         database: DATABASE_NAME,
         timestamp: new Date().toISOString()
       })
@@ -147,6 +175,7 @@ exports.handler = async (event, context) => {
   } catch (error) {
     console.error('=== MY TRACKS ERROR ===');
     console.error('Error:', error.message);
+    console.error('Stack:', error.stack);
 
     return {
       statusCode: 500,
@@ -154,10 +183,12 @@ exports.handler = async (event, context) => {
       body: JSON.stringify({
         error: 'Failed to fetch user tracks',
         message: error.message,
-        database: DATABASE_NAME
+        database: DATABASE_NAME,
+        timestamp: new Date().toISOString()
       })
     };
   } finally {
+    // Keep connection cached for performance
     console.log('My tracks function completed');
   }
 };
