@@ -76,14 +76,26 @@ exports.handler = async (event) => {
     
     // Parse request body
     let requestBody;
-    try {
-      requestBody = JSON.parse(event.body || '{}');
-    } catch (parseError) {
-      console.error('Body parsing failed:', parseError);
+    if (
+      event.headers['content-type'] &&
+      event.headers['content-type'].includes('application/json')
+    ) {
+      try {
+        requestBody = JSON.parse(event.body || '{}');
+      } catch (parseError) {
+        console.error('Body parsing failed:', parseError);
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({ error: 'Invalid request body' })
+        };
+      }
+    } else {
+      // Nếu không phải JSON, trả về lỗi rõ ràng
       return {
-        statusCode: 400,
+        statusCode: 415,
         headers,
-        body: JSON.stringify({ error: 'Invalid request body' })
+        body: JSON.stringify({ error: 'Chỉ hỗ trợ Content-Type: application/json. Không hỗ trợ upload file trực tiếp.' })
       };
     }
     
