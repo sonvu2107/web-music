@@ -1,6 +1,8 @@
 // netlify/functions/api-health.js - Dedicated health endpoint
 const { MongoClient } = require('mongodb');
 
+const DATABASE_NAME = 'test'; // Thay đổi database name
+
 exports.handler = async (event, context) => {
   try {
     // Set CORS headers
@@ -44,14 +46,23 @@ exports.handler = async (event, context) => {
         const startTime = Date.now();
         
         await client.connect();
-        const db = client.db();
+        const db = client.db(DATABASE_NAME); // Sử dụng database 'test'
         await db.admin().ping();
-        await client.close();
+        
+        // Check collections in 'test' database
+        const collections = await db.listCollections().toArray();
+        const usersCount = await db.collection('users').countDocuments();
+        const tracksCount = await db.collection('tracks').countDocuments();
         
         health.database = {
           status: '✅ connected',
-          responseTime: `${Date.now() - startTime}ms`
+          responseTime: `${Date.now() - startTime}ms`,
+          collections: collections.map(col => col.name),
+          usersCount,
+          tracksCount
         };
+        
+        await client.close();
       } catch (dbError) {
         health.database = {
           status: '❌ connection failed',

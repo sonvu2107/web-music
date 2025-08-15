@@ -1,29 +1,34 @@
 // netlify/functions/auth-login.js - Dedicated login function
-const mongoose = require('mongoose');
+const { MongoClient, ObjectId } = require('mongodb');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 // MongoDB connection với lazy loading
 let isConnected = false;
+let cachedClient = null;
+
+const MONGODB_URI = process.env.MONGODB_URI;
+const DATABASE_NAME = 'test'; // Thay đổi database name
 
 const connectToDatabase = async () => {
-  if (isConnected) {
-    return;
+  if (isConnected && cachedClient) {
+    return cachedClient;
   }
 
   try {
-    const MONGODB_URI = process.env.MONGODB_URI;
     if (!MONGODB_URI) {
       throw new Error('MONGODB_URI environment variable is not set');
     }
 
-    await mongoose.connect(MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    const client = new MongoClient(MONGODB_URI);
+    await client.connect();
+    await client.db(DATABASE_NAME).admin().ping();
     
+    cachedClient = client;
     isConnected = true;
-    console.log('📊 MongoDB connected successfully');
+    console.log(`📊 MongoDB connected to database: ${DATABASE_NAME}`);
+    
+    return client;
   } catch (error) {
     console.error('❌ MongoDB connection error:', error);
     throw error;
@@ -79,7 +84,8 @@ exports.handler = async (event, context) => {
     }
 
     // Connect to database
-    await connectToDatabase();
+    const client = await connectToDatabase();
+    const db = client.db(test); // Sử dụng database 'test'
 
     const { username, password } = JSON.parse(event.body);
 

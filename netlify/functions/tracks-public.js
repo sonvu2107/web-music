@@ -1,5 +1,6 @@
 // netlify/functions/tracks-public.js - Public tracks endpoint
 const mongoose = require('mongoose');
+const { MongoClient } = require('mongodb');
 
 // MongoDB connection với lazy loading
 let isConnected = false;

@@ -1,153 +1,174 @@
-// netlify/functions/user-profile.js - User profile endpoint
-const mongoose = require('mongoose');
-const jwt = require('jsonwebtoken');
+const { MongoClient, ObjectId } = require('mongodb');
 
-// MongoDB connection với lazy loading
+const MONGODB_URI = process.env.MONGODB_URI;
+const DATABASE_NAME = 'test'; 
+
 let isConnected = false;
+let cachedClient = null;
 
 const connectToDatabase = async () => {
-  if (isConnected) {
-    return;
+  if (isConnected && cachedClient) {
+    return cachedClient;
   }
 
   try {
-    const MONGODB_URI = process.env.MONGODB_URI;
     if (!MONGODB_URI) {
       throw new Error('MONGODB_URI environment variable is not set');
     }
 
-    await mongoose.connect(MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    const client = new MongoClient(MONGODB_URI);
+    await client.connect();
+    await client.db(DATABASE_NAME).admin().ping();
     
+    cachedClient = client;
     isConnected = true;
-    console.log('📊 MongoDB connected successfully');
+    console.log(`📊 MongoDB connected to database: ${DATABASE_NAME}`);
+    
+    return client;
   } catch (error) {
     console.error('❌ MongoDB connection error:', error);
     throw error;
   }
 };
 
-// User Schema
-const userSchema = new mongoose.Schema({
-  username: { type: String, required: true, unique: true },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  displayName: { type: String, default: '' },
-  avatar: { type: String, default: '' },
-  createdAt: { type: Date, default: Date.now },
-  lastLogin: { type: Date, default: Date.now },
-  preferences: {
-    theme: { type: String, default: 'dark' },
-    volume: { type: Number, default: 0.8 },
-    repeat: { type: String, default: 'none' },
-    shuffle: { type: Boolean, default: false }
-  }
-});
-
-const User = mongoose.models.User || mongoose.model('User', userSchema);
-
-// JWT verification
-const authenticateToken = (token) => {
-  if (!token) {
-    throw new Error('No token provided');
-  }
-  
-  const JWT_SECRET = process.env.JWT_SECRET || 'flowplay_secret_key_2025';
-  try {
-    return jwt.verify(token, JWT_SECRET);
-  } catch (error) {
-    throw new Error('Invalid token');
-  }
-};
-
-// Main handler
 exports.handler = async (event, context) => {
+  console.log('=== USER PROFILE FUNCTION ===');
+  console.log('Database:', DATABASE_NAME);
+  console.log('Method:', event.httpMethod);
+
+  const headers = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Content-Type': 'application/json'
+  };
+
+  if (event.httpMethod === 'OPTIONS') {
+    return { statusCode: 200, headers, body: '' };
+  }
+
+  let client;
+
   try {
-    // Set CORS headers
-    const headers = {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Content-Type': 'application/json'
-    };
-
-    // Handle preflight OPTIONS request
-    if (event.httpMethod === 'OPTIONS') {
-      return {
-        statusCode: 200,
-        headers,
-        body: ''
-      };
-    }
-
     // Check authorization
     const authHeader = event.headers.authorization || event.headers.Authorization;
-    const token = authHeader && authHeader.replace('Bearer ', '');
-    
-    if (!token) {
+    console.log('Auth header:', authHeader ? 'Present' : 'Missing');
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return {
         statusCode: 401,
         headers,
-        body: JSON.stringify({ error: 'Access token required' })
+        body: JSON.stringify({ error: 'Authorization token required' })
       };
     }
 
-    // Verify token
-    const decoded = authenticateToken(token);
+    const token = authHeader.split(' ')[1];
+    console.log('Token extracted:', token.substring(0, 10) + '...');
 
     // Connect to database
-    await connectToDatabase();
+    client = await connectToDatabase();
+    const db = client.db(DATABASE_NAME);
+    const usersCollection = db.collection('users');
+
+    // Verify token and get user
+    const user = await usersCollection.findOne({ token });
+    
+    if (!user) {
+      console.log('User not found with token');
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({ error: 'Invalid token' })
+      };
+    }
+
+    console.log('User verified:', user.username);
 
     if (event.httpMethod === 'GET') {
       // Get user profile
-      const user = await User.findById(decoded.userId).select('-password');
-      if (!user) {
-        return {
-          statusCode: 404,
-          headers,
-          body: JSON.stringify({ error: 'User not found' })
-        };
-      }
-
       return {
         statusCode: 200,
         headers,
-        body: JSON.stringify({ user })
+        body: JSON.stringify({
+          success: true,
+          user: {
+            id: user._id,
+            username: user.username,
+            email: user.email,
+            displayName: user.displayName || user.username,
+            avatar: user.avatar || '',
+            createdAt: user.createdAt,
+            lastLogin: user.lastLogin,
+            trackCount: user.trackCount || 0,
+            preferences: user.preferences || {
+              theme: 'dark',
+              volume: 0.8,
+              repeat: 'none',
+              shuffle: false
+            }
+          }
+        })
       };
 
     } else if (event.httpMethod === 'PUT') {
       // Update user profile
-      const { displayName, preferences } = JSON.parse(event.body);
+      const requestBody = JSON.parse(event.body);
+      const { displayName, preferences, avatar } = requestBody;
       
-      const user = await User.findById(decoded.userId);
-      if (!user) {
-        return {
-          statusCode: 404,
-          headers,
-          body: JSON.stringify({ error: 'User not found' })
+      console.log('Update request:', { displayName, preferences, avatar });
+
+      const updateFields = {
+        updatedAt: new Date()
+      };
+
+      if (displayName !== undefined) {
+        updateFields.displayName = displayName.trim();
+      }
+
+      if (preferences !== undefined) {
+        updateFields.preferences = {
+          ...user.preferences,
+          ...preferences
         };
       }
 
-      if (displayName) user.displayName = displayName;
-      if (preferences) user.preferences = { ...user.preferences, ...preferences };
-      user.updatedAt = new Date();
+      if (avatar !== undefined) {
+        updateFields.avatar = avatar;
+      }
 
-      await user.save();
+      // Update user in database
+      const updateResult = await usersCollection.updateOne(
+        { _id: user._id },
+        { $set: updateFields }
+      );
+
+      if (updateResult.modifiedCount === 0) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({ error: 'No changes made' })
+        };
+      }
+
+      // Get updated user
+      const updatedUser = await usersCollection.findOne({ _id: user._id });
+
+      console.log('Profile updated successfully for:', user.username);
 
       return {
         statusCode: 200,
         headers,
         body: JSON.stringify({
+          success: true,
           message: 'Profile updated successfully',
           user: {
-            id: user._id,
-            username: user.username,
-            email: user.email,
-            displayName: user.displayName,
-            avatar: user.avatar,
-            preferences: user.preferences
+            id: updatedUser._id,
+            username: updatedUser.username,
+            email: updatedUser.email,
+            displayName: updatedUser.displayName,
+            avatar: updatedUser.avatar,
+            preferences: updatedUser.preferences,
+            updatedAt: updatedUser.updatedAt
           }
         })
       };
@@ -161,26 +182,21 @@ exports.handler = async (event, context) => {
     }
 
   } catch (error) {
-    console.error('Profile error:', error);
-    
-    if (error.message.includes('token') || error.message.includes('Token')) {
-      return {
-        statusCode: 401,
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ error: error.message })
-      };
-    }
+    console.error('=== USER PROFILE ERROR ===');
+    console.error('Error:', error.message);
+    console.error('Stack:', error.stack);
 
     return {
       statusCode: 500,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ error: 'Failed to process profile request' })
+      headers,
+      body: JSON.stringify({
+        error: 'Failed to process profile request',
+        message: error.message,
+        database: DATABASE_NAME,
+        timestamp: new Date().toISOString()
+      })
     };
+  } finally {
+    console.log('User profile function completed');
   }
 };
