@@ -1,137 +1,188 @@
-const { MongoClient, ObjectId } = require('mongodb');
-const jwt = require('jsonwebtoken');
+const { MongoClient, ObjectId } = require("mongodb");
+const jwt = require("jsonwebtoken");
+const cloudinary = require("cloudinary").v2;
+const busboy = require("busboy");
+const streamifier = require("streamifier");
 
+// ====== Kết nối MongoDB ======
 let cachedDb = null;
-
 async function connectToDatabase() {
   if (cachedDb) return cachedDb;
-  
-  try {
-    if (!process.env.MONGODB_URI) {
-      throw new Error('MONGODB_URI environment variable not set');
-    }
-    
-    const client = new MongoClient(process.env.MONGODB_URI, {
-      useUnifiedTopology: true,
-    });
-    
-    await client.connect();
-    cachedDb = client.db('flowplay');
-    console.log('MongoDB connected for upload-track');
-    return cachedDb;
-  } catch (error) {
-    console.error('Database connection error:', error);
-    throw error;
-  }
+
+  if (!process.env.MONGODB_URI) throw new Error("MONGODB_URI not set");
+  const client = new MongoClient(process.env.MONGODB_URI, { useUnifiedTopology: true });
+  await client.connect();
+  cachedDb = client.db("flowplay");
+  return cachedDb;
 }
 
+// ====== Config Cloudinary ======
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
 exports.handler = async (event) => {
-  // CORS headers
   const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Content-Type': 'application/json'
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
   };
 
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' };
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 200, headers, body: "" };
   }
 
-  if (event.httpMethod !== 'POST') {
+  if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
       headers,
-      body: JSON.stringify({ error: 'Method not allowed' })
+      body: JSON.stringify({ error: "Method not allowed" }),
     };
   }
 
   try {
-    console.log('Upload track function called');
-    
-    // Parse authorization
-    const token = event.headers.authorization?.split(' ')[1];
+    // ====== Xác thực JWT ======
+    const token = event.headers.authorization?.split(" ")[1];
     if (!token) {
       return {
         statusCode: 401,
         headers,
-        body: JSON.stringify({ error: 'Cần đăng nhập để upload nhạc' })
+        body: JSON.stringify({ error: "Chưa đăng nhập" }),
       };
     }
 
-    // Verify JWT
-    const JWT_SECRET = process.env.JWT_SECRET || 'flowplay_secret_key_2025';
     let decoded;
     try {
-      decoded = jwt.verify(token, JWT_SECRET);
-      console.log('JWT verified for user:', decoded.userId);
-    } catch (jwtError) {
-      console.error('JWT verification failed:', jwtError);
+      decoded = jwt.verify(token, process.env.JWT_SECRET || "flowplay_secret_key_2025");
+    } catch {
       return {
         statusCode: 403,
         headers,
-        body: JSON.stringify({ error: 'Token không hợp lệ' })
+        body: JSON.stringify({ error: "Token không hợp lệ" }),
       };
     }
-    
-    // Parse request body
-    let requestBody;
+
+    // ====== Parse multipart/form-data với busboy ======
     if (
-      event.headers['content-type'] &&
-      event.headers['content-type'].includes('application/json')
+      !event.headers["content-type"] ||
+      !event.headers["content-type"].includes("multipart/form-data")
     ) {
-      try {
-        requestBody = JSON.parse(event.body || '{}');
-      } catch (parseError) {
-        console.error('Body parsing failed:', parseError);
-        return {
-          statusCode: 400,
-          headers,
-          body: JSON.stringify({ error: 'Invalid request body' })
-        };
-      }
-    } else {
-      // Nếu không phải JSON, trả về lỗi rõ ràng
       return {
         statusCode: 415,
         headers,
-        body: JSON.stringify({ error: 'Chỉ hỗ trợ Content-Type: application/json. Không hỗ trợ upload file trực tiếp.' })
+        body: JSON.stringify({ error: "Content-Type phải là multipart/form-data" }),
       };
     }
-    
-    console.log('Request body parsed:', Object.keys(requestBody));
-    
-    // Connect to database
-    const db = await connectToDatabase();
-    
-    // For now, return informative message about upload limitations
-    // In production, you would implement file storage (Cloudinary, AWS S3, etc.)
-    
-    return {
-      statusCode: 501,
-      headers,
-      body: JSON.stringify({ 
-        error: 'Upload chưa được hỗ trợ',
-        message: 'Tính năng upload nhạc đang được phát triển. Hiện tại bạn có thể nghe nhạc từ Discovery và tạo playlist.',
-        suggestion: 'Hãy thử tính năng Discovery để tìm và nghe nhạc miễn phí!',
-        debug: {
-          userId: decoded.userId,
-          bodyKeys: Object.keys(requestBody),
-          timestamp: new Date().toISOString()
-        }
-      })
-    };
 
+    const bb = busboy({
+      headers: { "content-type": event.headers["content-type"] },
+    });
+
+    let fileBuffer = null;
+    let fileInfo = {};
+    let fields = {};
+
+    return await new Promise((resolve, reject) => {
+      bb.on("file", (name, file, info) => {
+        fileInfo = info;
+        const buffers = [];
+        file.on("data", (data) => buffers.push(data));
+        file.on("end", () => {
+          fileBuffer = Buffer.concat(buffers);
+        });
+      });
+
+      bb.on("field", (name, val) => {
+        fields[name] = val;
+      });
+
+      bb.on("finish", async () => {
+        if (!fileBuffer) {
+          resolve({
+            statusCode: 400,
+            headers,
+            body: JSON.stringify({ error: "Thiếu file upload" }),
+          });
+          return;
+        }
+
+        // ====== Upload lên Cloudinary ======
+        try {
+          const uploadStream = cloudinary.uploader.upload_stream(
+            { resource_type: "auto", folder: "flowplay_tracks" },
+            async (error, result) => {
+              if (error) {
+                resolve({
+                  statusCode: 500,
+                  headers,
+                  body: JSON.stringify({ error: "Upload lên Cloudinary thất bại", details: error.message }),
+                });
+                return;
+              }
+
+              // ====== Lưu MongoDB ======
+              try {
+                const db = await connectToDatabase();
+                const newTrack = {
+                  title: fields.title || result.original_filename,
+                  artist: fields.artist || "Unknown",
+                  album: fields.album || "",
+                  genre: fields.genre || "",
+                  uploadedBy: ObjectId(decoded.userId),
+                  fileUrl: result.secure_url,
+                  publicId: result.public_id,
+                  duration: 0,
+                  sourceType: "upload",
+                  isPublic: fields.isPublic === "true" || false,
+                  playCount: 0,
+                  likeCount: 0,
+                  createdAt: new Date(),
+                };
+
+                await db.collection("tracks").insertOne(newTrack);
+
+                resolve({
+                  statusCode: 200,
+                  headers,
+                  body: JSON.stringify({ message: "Upload thành công", track: newTrack }),
+                });
+              } catch (dbErr) {
+                resolve({
+                  statusCode: 500,
+                  headers,
+                  body: JSON.stringify({ error: "Lỗi lưu MongoDB", details: dbErr.message }),
+                });
+              }
+            }
+          );
+          streamifier.createReadStream(fileBuffer).pipe(uploadStream);
+        } catch (err) {
+          resolve({
+            statusCode: 500,
+            headers,
+            body: JSON.stringify({ error: "Lỗi upload file", details: err.message }),
+          });
+        }
+      });
+
+      bb.on("error", (err) => {
+        resolve({
+          statusCode: 500,
+          headers,
+          body: JSON.stringify({ error: "Lỗi parse multipart", details: err.message }),
+        });
+      });
+
+      bb.end(Buffer.from(event.body, event.isBase64Encoded ? "base64" : "utf8"));
+    });
   } catch (error) {
-    console.error('Upload function error:', error);
+    console.error("Upload error:", error);
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ 
-        error: 'Lỗi server',
-        message: 'Có lỗi xảy ra khi xử lý upload. Vui lòng thử lại sau.',
-        details: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-      })
+      body: JSON.stringify({ error: "Lỗi server", details: error.message }),
     };
   }
 };
