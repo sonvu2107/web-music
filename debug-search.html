@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Music Search</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            padding: 20px;
+            background: #0a0b0f;
+            color: #fff;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .search-container {
+            margin: 20px 0;
+            padding: 20px;
+            background: #1a1d26;
+            border-radius: 12px;
+        }
+        input {
+            width: 60%;
+            padding: 12px;
+            background: #2a2d36;
+            border: 1px solid #3a3d46;
+            color: #fff;
+            border-radius: 8px;
+            margin-right: 10px;
+        }
+        button {
+            padding: 12px 20px;
+            background: #6366f1;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        button:hover { background: #5855eb; }
+        .result {
+            margin: 10px 0;
+            padding: 15px;
+            background: #2a2d36;
+            border-radius: 8px;
+            border-left: 4px solid #22c55e;
+        }
+        .error {
+            border-left-color: #ef4444;
+        }
+        .loading {
+            border-left-color: #f59e0b;
+        }
+        pre {
+            background: #1a1d26;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 Debug Music Search</h1>
+    
+    <div class="search-container">
+        <h3>Test Basic Search</h3>
+        <input id="search-input" placeholder="Nhập từ khóa (jazz, piano, electronic...)" />
+        <button onclick="testBasicSearch()">Tìm kiếm</button>
+        <div id="search-results"></div>
+    </div>
+
+    <div class="search-container">
+        <h3>Test Advanced Search</h3>
+        <input id="adv-search-input" placeholder="Từ khóa cho advanced search" />
+        <button onclick="testAdvancedSearch()">Advanced Search</button>
+        <div id="adv-results"></div>
+    </div>
+
+    <div class="search-container">
+        <h3>Direct URL Test</h3>
+        <input id="url-input" placeholder="https://example.com/audio.mp3" style="width: 80%;" />
+        <button onclick="testDirectURL()">Test URL</button>
+        <div id="url-results"></div>
+    </div>
+
+    <script type="module">
+        import { freemiumMusic } from './scripts/freemium-music.js';
+        
+        window.freemiumMusic = freemiumMusic;
+        
+        window.testBasicSearch = async () => {
+            const query = document.getElementById('search-input').value.trim();
+            const resultsDiv = document.getElementById('search-results');
+            
+            if (!query) {
+                resultsDiv.innerHTML = '<div class="result error">❌ Vui lòng nhập từ khóa</div>';
+                return;
+            }
+            
+            resultsDiv.innerHTML = '<div class="result loading">🔍 Đang tìm kiếm...</div>';
+            
+            try {
+                console.log('Starting basic search for:', query);
+                const results = await freemiumMusic.search(query, 5);
+                
+                resultsDiv.innerHTML = `
+                    <div class="result">
+                        <h4>✅ Tìm thấy ${results.length} kết quả</h4>
+                        ${results.map((r, i) => `
+                            <div style="margin: 10px 0; padding: 10px; background: #3a3d46; border-radius: 6px;">
+                                <strong>${r.title}</strong> - ${r.artist}<br>
+                                <small>Source: ${r.source} | Duration: ${r.duration}s | Genre: ${r.genre || 'N/A'}</small><br>
+                                <small style="color: #888;">URL: ${r.url?.substring(0, 60)}${r.url?.length > 60 ? '...' : ''}</small>
+                                ${r.url && r.url !== 'generated://audio' ? 
+                                    `<br><audio controls style="width: 100%; margin-top: 8px;"><source src="${r.url}">Audio not supported</audio>` : 
+                                    '<br><small style="color: #f59e0b;">🎵 Generated audio available</small>'
+                                }
+                            </div>
+                        `).join('')}
+                        <pre>${JSON.stringify(results, null, 2)}</pre>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Search error:', error);
+                resultsDiv.innerHTML = `
+                    <div class="result error">
+                        <h4>❌ Lỗi tìm kiếm</h4>
+                        <p>Error: ${error.message}</p>
+                        <pre>${error.stack}</pre>
+                    </div>
+                `;
+            }
+        };
+
+        window.testAdvancedSearch = async () => {
+            const query = document.getElementById('adv-search-input').value.trim();
+            const resultsDiv = document.getElementById('adv-results');
+            
+            if (!query) {
+                resultsDiv.innerHTML = '<div class="result error">❌ Vui lòng nhập từ khóa</div>';
+                return;
+            }
+            
+            resultsDiv.innerHTML = '<div class="result loading">🔍 Advanced search...</div>';
+            
+            try {
+                console.log('Starting advanced search for:', query);
+                const results = await freemiumMusic.advancedSearch(query, {
+                    maxResults: 6,
+                    includeGenerated: true
+                });
+                
+                const sourceGroups = {};
+                results.forEach(r => {
+                    if (!sourceGroups[r.source]) sourceGroups[r.source] = [];
+                    sourceGroups[r.source].push(r);
+                });
+                
+                resultsDiv.innerHTML = `
+                    <div class="result">
+                        <h4>✅ Advanced: ${results.length} kết quả từ ${Object.keys(sourceGroups).length} nguồn</h4>
+                        <p><strong>Sources found:</strong> ${Object.keys(sourceGroups).join(', ')}</p>
+                        ${Object.entries(sourceGroups).map(([source, tracks]) => `
+                            <div style="margin: 15px 0;">
+                                <h5 style="color: #6366f1;">📁 ${source.toUpperCase()} (${tracks.length})</h5>
+                                ${tracks.map(r => `
+                                    <div style="margin: 8px 0; padding: 8px; background: #3a3d46; border-radius: 4px;">
+                                        <strong>${r.title}</strong> - ${r.artist}<br>
+                                        <small>Duration: ${r.duration}s</small>
+                                        ${r.url && r.url !== 'generated://audio' ? 
+                                            `<br><audio controls style="width: 100%; margin-top: 4px;"><source src="${r.url}">Audio not supported</audio>` : 
+                                            '<br><small style="color: #f59e0b;">🎵 Generated audio</small>'
+                                        }
+                                    </div>
+                                `).join('')}
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Advanced search error:', error);
+                resultsDiv.innerHTML = `
+                    <div class="result error">
+                        <h4>❌ Lỗi advanced search</h4>
+                        <p>Error: ${error.message}</p>
+                    </div>
+                `;
+            }
+        };
+
+        window.testDirectURL = async () => {
+            const url = document.getElementById('url-input').value.trim();
+            const resultsDiv = document.getElementById('url-results');
+            
+            if (!url) {
+                resultsDiv.innerHTML = '<div class="result error">❌ Vui lòng nhập URL</div>';
+                return;
+            }
+            
+            resultsDiv.innerHTML = '<div class="result loading">🔍 Testing URL...</div>';
+            
+            try {
+                console.log('Testing URL:', url);
+                const results = await freemiumMusic.searchByUrl(url);
+                
+                if (results && results.length > 0) {
+                    const result = results[0];
+                    resultsDiv.innerHTML = `
+                        <div class="result">
+                            <h4>✅ URL hoạt động!</h4>
+                            <p><strong>${result.title}</strong> - ${result.artist}</p>
+                            <p>Duration: ${result.duration}s</p>
+                            <audio controls style="width: 100%; margin: 10px 0;">
+                                <source src="${result.url}" type="audio/mpeg">
+                                Trình duyệt không hỗ trợ audio.
+                            </audio>
+                            <pre>${JSON.stringify(result, null, 2)}</pre>
+                        </div>
+                    `;
+                } else {
+                    resultsDiv.innerHTML = `
+                        <div class="result error">
+                            <h4>❌ URL không hoạt động</h4>
+                            <p>URL không thể truy cập hoặc không phải file audio hợp lệ</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('URL test error:', error);
+                resultsDiv.innerHTML = `
+                    <div class="result error">
+                        <h4>❌ Lỗi test URL</h4>
+                        <p>Error: ${error.message}</p>
+                    </div>
+                `;
+            }
+        };
+        
+        // Test ngay khi load
+        console.log('🎵 Debug Music Search Ready!');
+        console.log('FreemiumMusic object:', freemiumMusic);
+    </script>
+</body>
+</html>

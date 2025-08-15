@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FlowPlay — Trình nghe nhạc</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0e0f13">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="styles/mongodb.css">
+</head>
+
+<body>
+  <div class="app" id="app">
+    <aside class="sidebar" aria-label="Thanh điều hướng">
+      <div class="logo">
+        <div class="dot"></div>
+        <div>FlowPlay</div>
+      </div>
+      <nav>
+        <div class="nav-group">
+          <div class="nav-title">Duyệt</div>
+          <button class="nav-btn active" data-route="home"><img src="assets/icons/home.svg" width="20"
+              height="20" />Trang chủ</button>
+          <button class="nav-btn" data-route="library"><img src="assets/icons/library.svg" width="20" height="20" />Thư
+            viện <span class="badge" id="lib-count">0</span></button>
+          <button class="nav-btn" data-route="playlists"><img src="assets/icons/list.svg" width="20"
+              height="20" />Playlist</button>
+          <button class="nav-btn" data-route="settings"><img src="assets/icons/settings.svg" width="20"
+              height="20" />Cài đặt</button>
+        </div>
+      </nav>
+      <div style="margin-top:auto; display:flex; gap:8px;">
+        <button class="btn secondary" id="btn-new-playlist"><img src="assets/icons/add.svg" width="18" height="18" />
+          Playlist mới</button>
+        <button class="btn ghost" id="btn-upload"><img src="assets/icons/add.svg" width="18" height="18" /> Thêm
+          nhạc</button>
+        <input id="file-input" type="file" multiple accept="audio/*" style="display:none;" />
+      </div>
+    </aside>
+
+    <header>
+      <div class="search">
+        <img src="assets/icons/search.svg" width="18" height="18" />
+        <input id="search-input" placeholder="Tìm bài hát, nghệ sĩ, album..." />
+      </div>
+      <div class="header-actions">
+        <button class="icon-btn" id="theme-toggle" title="Đổi chủ đề"><img src="assets/icons/moon.svg" width="20"
+            height="20" /></button>
+        
+        <!-- Login button (shown when not logged in) -->
+        <button class="icon-btn" id="btn-login" title="Đăng nhập" onclick="authUI.showModal()" style="display: block;"><img src="assets/icons/user.svg" width="20"
+            height="20" /></button>
+        
+        <!-- MongoDB features (hidden when not logged in) -->
+        <button class="icon-btn" id="btn-profile" title="Hồ Sơ" onclick="mongoUI.showModal('userProfileModal')" style="display: none;"><img src="assets/icons/user.svg" width="20"
+            height="20" /></button>
+        <button class="icon-btn" id="btn-logout" title="Đăng xuất" onclick="authUI.handleLogout()" style="display: none;"><img src="assets/icons/logout.svg" width="20"
+            height="20" /></button>
+        <div class="avatar" id="avatar">?</div>
+      </div>
+    </header>
+
+    <main>
+      <div class="main-scroll" id="view-home">
+        <h2>Xin chào, <span id="hello-name">bạn.</span></h2>
+        <p class="muted">Thêm nhạc, tạo playlist và thưởng thức với hiệu ứng mượt mà.</p>
+        <div class="cards">
+          <div class="card">
+            <div class="cover">Demo</div>
+            <div class="meta">
+              <div>
+                <div class="title">Âm 440Hz</div>
+                <div class="muted">Bản mẫu để bạn thử</div>
+              </div>
+              <button class="btn secondary" id="add-demo"><img src="assets/icons/add.svg" width="16" height="16" />
+                Thêm</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="cover">Kéo & Thả</div>
+            <div class="meta">
+              <div>
+                <div class="title">Thêm file nhanh</div>
+                <div class="muted">Thả file audio vào bất kỳ đâu</div>
+              </div>
+              <div class="tag">Mẹo</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="cover">🎛️</div>
+            <div class="meta">
+              <div>
+                <div class="title">Trình phát nhạc</div>
+                <div class="muted">Shuffle, repeat, phím tắt, visualizer</div>
+              </div>
+              <div class="tag">Mới</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Public Discovery Section -->
+        <div class="section-header">
+          <h2>🌍 Khám Phá Nhạc Từ Cộng Đồng</h2>
+          <button class="btn ghost" id="btn-refresh-discovery">Làm mới</button>
+        </div>
+        <div class="discovery-tracks" id="discovery-tracks">
+          <div class="loading-message">Đang tải nhạc từ cộng đồng...</div>
+        </div>
+      </div>
+
+      <div class="main-scroll" id="view-library" hidden>
+        <div class="toolbar">
+          <h2>Thư viện</h2>
+          <div style="display:flex; gap:8px;">
+            <button class="btn secondary" id="btn-add-tracks"><img src="assets/icons/add.svg" width="16" height="16" />
+              Thêm bài hát</button>
+            <button class="btn ghost" id="btn-online-search"><img src="assets/icons/search.svg" width="16"
+                height="16" /> Tìm nhạc online</button>
+            <button class="btn ghost" id="btn-history"><img src="assets/icons/list.svg" width="16" height="16" /> Lịch
+              sử</button>
+            <button class="btn ghost" id="btn-sleep-timer"><img src="assets/icons/moon.svg" width="16" height="16" />
+              Hẹn giờ tắt</button>
+          </div>
+        </div>
+        <div id="drop-zone" class="card"
+          style="text-align:center; padding:30px; border:1px dashed rgba(124,92,255,.35);">
+          <p>Kéo & thả file âm thanh vào đây hoặc bấm "Thêm bài hát".</p>
+          <p style="font-size: 0.9em; opacity: 0.7; margin-top: 10px;">
+            💾 = Nhạc local | ☁️ = Nhạc trên MongoDB (cần đăng nhập)
+          </p>
+        </div>
+        <table id="lib-table">
+          <caption style="text-align:right; padding:4px 0;">
+            <button class="btn ghost" id="btn-share-library"><img src="assets/icons/share.svg" width="16" height="16" />
+              Chia sẻ thư viện</button>
+          </caption>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Tiêu đề</th>
+              <th>Nghệ sĩ</th>
+              <th>Thời lượng</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="main-scroll" id="view-playlists" hidden>
+        <div class="toolbar">
+          <h2>Playlist</h2>
+          <button class="btn" id="btn-create-playlist"><img src="assets/icons/add.svg" width="16" height="16" />
+            Playlist mới</button>
+        </div>
+        <div class="cards" id="playlist-cards"></div>
+        <div style="text-align:right; margin:8px 0;">
+          <button class="btn ghost" id="btn-share-playlists"><img src="assets/icons/share.svg" width="16" height="16" />
+            Chia sẻ tất cả playlist</button>
+        </div>
+        <div id="playlist-detail" hidden>
+          <div class="toolbar">
+            <div>
+              <h3 id="pl-title" style="margin:0;"></h3>
+              <div class="muted" id="pl-count"></div>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn secondary" id="pl-play-all">Phát tất cả</button>
+              <button class="btn ghost" id="pl-delete"><img src="assets/icons/delete.svg" width="16" height="16" />
+                Xóa</button>
+              <button class="btn ghost" id="pl-share"><img src="assets/icons/share.svg" width="16" height="16" /> Chia
+                sẻ</button>
+            </div>
+          </div>
+          <table id="pl-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Bài hát</th>
+                <th>Nghệ sĩ</th>
+                <th>Thời lượng</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="main-scroll" id="view-settings" hidden>
+        <h2>Cài đặt</h2>
+        <div class="card">
+          <div class="meta">
+            <div>
+              <div class="title">Giao diện</div>
+              <div class="muted">Chuyển đổi sáng/tối, hiệu ứng</div>
+            </div>
+            <button class="btn secondary" id="btn-theme">Đổi chủ đề</button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <div class="player" aria-label="Trình phát">
+      <div class="info">
+        <div class="thumb" id="thumb">♪</div>
+        <div>
+          <div class="title" id="now-title">Chưa phát</div>
+          <div class="muted" id="now-artist">—</div>
+        </div>
+      </div>
+      <div>
+        <canvas id="viz" height="60"></canvas>
+        <div class="controls" style="margin-top:6px;">
+          <button class="ctrl" id="btn-prev"><img src="assets/icons/prev.svg" width="20" height="20" /></button>
+          <button class="ctrl" id="btn-play"><img id="play-icon" src="assets/icons/play.svg" width="20" height="20" /></button>
+          <button class="ctrl" id="btn-next"><img src="assets/icons/next.svg" width="20" height="20" /></button>
+          <div class="slider" style="flex:1; padding:0 10px;">
+            <span class="muted" id="cur-time">0:00</span>
+            <input type="range" id="seek" min="0" max="100" value="0" />
+            <span class="muted" id="dur-time">0:00</span>
+          </div>
+        </div>
+      </div>
+      <div class="right">
+        <button class="ctrl" id="btn-shuffle"><img src="assets/icons/shuffle.svg" width="20" height="20" /></button>
+        <button class="ctrl" id="btn-repeat"><img src="assets/icons/repeat.svg" width="20" height="20" /></button>
+        <div class="slider" style="width:200px;"><img src="assets/icons/volume.svg" width="20" height="20" /><input
+            type="range" id="volume" min="0" max="1" step="0.01" value="0.8" /></div>
+      </div>
+      <audio id="audio" crossorigin="anonymous"></audio>
+    </div>
+  </div>
+
+  <!-- Profile Edit Modal -->
+  <div class="modal" id="profile-modal" aria-modal="true">
+    <div class="modal-card">
+      <h2>Chỉnh sửa hồ sơ</h2>
+      <div class="row" style="align-items:center; gap:16px;">
+        <img id="profile-ava-preview" src="" alt="avatar"
+          style="width:64px;height:64px;border-radius:50%;object-fit:cover;background:#eee;">
+        <input type="file" id="profile-ava-input" accept="image/*" style="display:none;">
+        <button class="btn secondary" id="btn-upload-ava">Đổi ảnh</button>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <input id="profile-name" placeholder="Tên hiển thị" />
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <input id="profile-oldpass" type="password" placeholder="Mật khẩu cũ (để đổi mật khẩu)" />
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <input id="profile-newpass" type="password" placeholder="Mật khẩu mới (bỏ qua nếu không đổi)" />
+      </div>
+      <div class="row" style="margin-top:14px; gap:8px;">
+        <button class="btn" id="btn-save-profile">Lưu</button>
+        <button class="btn ghost" id="btn-cancel-profile">Hủy</button>
+      </div>
+      <p class="hint" style="margin-top:8px;">Chỉ cần nhập vào ô muốn đổi. Để đổi mật khẩu cần nhập đúng mật khẩu cũ.
+      </p>
+    </div>
+  </div>
+
+  <!-- Online Search Modal -->
+  <div class="modal" id="online-search-modal" aria-modal="true">
+    <div class="modal-card">
+      <h2>🎵 Tìm kiếm & Thêm nhạc online</h2>
+      <div class="row">
+        <input id="online-search-input" placeholder="Tìm kiếm hoặc paste link (.mp3, .wav, YouTube URL)..." style="flex:1;" />
+        <button class="btn" id="btn-online-search-go">Tìm</button>
+      </div>
+      <p style="color:var(--muted); font-size:12px; margin:8px 0 0 0;">
+        🎵 <strong>Nhiều nguồn</strong>: Jamendo, Internet Archive, Free Music • 🔗 <strong>Link trực tiếp</strong>: .mp3, .wav, .ogg • 📺 <strong>YouTube</strong>: Âm thanh tổng hợp
+      </p>
+      <div id="online-search-results" style="max-height:300px;overflow:auto;margin-top:10px;"></div>
+      <div class="row" style="margin-top:14px; gap:8px;">
+        <button class="btn ghost" id="btn-close-online-search">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- History Modal -->
+  <div class="modal" id="history-modal" aria-modal="true">
+    <div class="modal-card">
+      <h2>Lịch sử nghe & Gợi ý</h2>
+      <div id="history-list" style="max-height:300px;overflow:auto;"></div>
+      <div class="row" style="margin-top:14px; gap:8px;">
+        <button class="btn ghost" id="btn-close-history">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Share Modal -->
+  <div class="modal" id="share-modal" aria-modal="true">
+    <div class="modal-card">
+      <h2>Chia sẻ</h2>
+      <div id="share-link"
+        style="word-break:break-all; background:#f5f7fb; color:#1d2233; padding:8px; border-radius:8px; margin-bottom:10px;">
+      </div>
+      <button class="btn" id="btn-copy-share-link">Sao chép link</button>
+      <button class="btn ghost" id="btn-close-share">Đóng</button>
+    </div>
+  </div>
+
+  <!-- Sleep Timer Modal -->
+  <div class="modal" id="sleep-timer-modal" aria-modal="true">
+    <div class="modal-card">
+      <h2>Hẹn giờ tắt nhạc</h2>
+      <div class="row">
+        <input id="sleep-minutes" type="number" min="1" max="180" placeholder="Số phút..." style="width:100px;" />
+        <button class="btn" id="btn-set-sleep">Bắt đầu</button>
+      </div>
+      <div id="sleep-timer-status" style="margin-top:10px;color:var(--muted);"></div>
+      <div class="row" style="margin-top:14px; gap:8px;">
+        <button class="btn ghost" id="btn-cancel-sleep">Hủy</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notifications -->
+  <div class="toasts" id="toasts"></div>
+
+  <!-- Scripts -->
+  <script type="module" src="scripts/storage.js"></script>
+  <script type="module" src="scripts/main.js"></script>
+  <script src="scripts/api-client.js"></script>
+  <script src="scripts/mongodb-ui.js"></script>
+  <script src="scripts/auth-ui.js"></script>
+  <script src="scripts/discovery.js"></script>
+  <script type="module" src="scripts/profile-ui.js"></script>
+  <script type="module" src="scripts/share.js"></script>
+  <script type="module" src="scripts/youtube-api.js"></script>
+  <script type="module" src="scripts/online-search.js"></script>
+  <script type="module" src="scripts/history.js"></script>
+  <script type="module" src="scripts/sleep-timer.js"></script>
+  <script type="module" src="scripts/dragdrop.js"></script>
+</body>
+
+</html>

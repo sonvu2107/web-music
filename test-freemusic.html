@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Free Music</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            padding: 20px;
+            background: #0e0f13;
+            color: white;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 8px;
+            background: #1a1d26;
+        }
+        .success { border-left: 4px solid #22c55e; }
+        .error { border-left: 4px solid #ef4444; }
+        button {
+            background: #6366f1;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #5855eb; }
+        audio {
+            width: 100%;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎵 Test Free Music System</h1>
+    
+    <div class="test-result">
+        <h3>1. Test Multiple Source Search</h3>
+        <button onclick="testAdvancedSearch()">Tìm kiếm nâng cao "piano"</button>
+        <div id="advanced-search-results"></div>
+    </div>
+    
+    <div class="test-result">
+        <h3>2. Test Direct URL</h3>
+        <input id="url-input" placeholder="Paste audio URL here..." style="width:300px; padding:8px; margin-right:10px; background:#1a1d26; border:1px solid #333; color:white; border-radius:4px;">
+        <button onclick="testDirectUrl()">Test URL</button>
+        <div id="url-results"></div>
+    </div>
+    
+    <div class="test-result">
+        <h3>3. Test Audio Generation</h3>
+        <button onclick="testGeneration()">Tạo nhạc Jazz</button>
+        <div id="audio-container"></div>
+    </div>
+
+    <div class="test-result">
+        <h3>4. Test Sample URLs</h3>
+        <p style="font-size:13px; color:#aaa;">Thử các URL mẫu này:</p>
+        <div style="font-size:12px; font-family:monospace; color:#6366f1;">
+            <div>https://www.soundjay.com/misc/beep-07a.wav</div>
+            <div>https://sample-videos.com/zip/10/mp3/SampleAudio_0.4mb_mp3.mp3</div>
+            <div>https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg</div>
+        </div>
+        <button onclick="testSampleUrls()">Test Sample URLs</button>
+        <div id="sample-url-results"></div>
+    </div>
+
+    <script type="module">
+        import { freemiumMusic } from './scripts/freemium-music.js';
+        
+        window.freemiumMusic = freemiumMusic;
+        
+        window.testAdvancedSearch = async () => {
+            const resultsDiv = document.getElementById('advanced-search-results');
+            resultsDiv.innerHTML = '🔍 Đang tìm từ nhiều nguồn...';
+            
+            try {
+                const results = await freemiumMusic.advancedSearch('piano', { maxResults: 6 });
+                resultsDiv.innerHTML = `
+                    <div class="success">
+                        ✅ Tìm thấy ${results.length} kết quả từ ${new Set(results.map(r => r.source)).size} nguồn:
+                        ${results.map(r => `
+                            <div style="margin: 5px 0; padding: 8px; background: #2a2d36; border-radius: 4px; border-left: 3px solid ${getSourceColor(r.source)};">
+                                🎵 <strong>${r.title}</strong> - ${r.artist}<br>
+                                <small>Source: ${r.source} • Genre: ${r.genre || 'Music'} • Duration: ${r.duration}s</small><br>
+                                <small style="color:#888;">URL: ${r.url.length > 50 ? r.url.substring(0,50) + '...' : r.url}</small>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="error">❌ Lỗi: ${error.message}</div>`;
+            }
+        };
+
+        window.testDirectUrl = async () => {
+            const url = document.getElementById('url-input').value.trim();
+            const resultsDiv = document.getElementById('url-results');
+            
+            if (!url) {
+                resultsDiv.innerHTML = '<div class="error">❌ Vui lòng nhập URL</div>';
+                return;
+            }
+            
+            resultsDiv.innerHTML = '🔍 Đang kiểm tra URL...';
+            
+            try {
+                const results = await freemiumMusic.searchByUrl(url);
+                if (results.length > 0) {
+                    const result = results[0];
+                    resultsDiv.innerHTML = `
+                        <div class="success">
+                            ✅ URL hợp lệ!<br>
+                            <strong>${result.title}</strong> - ${result.artist}<br>
+                            <audio controls style="margin-top:8px; width:100%;">
+                                <source src="${result.url}" type="audio/mpeg">
+                                Trình duyệt không hỗ trợ.
+                            </audio>
+                        </div>
+                    `;
+                } else {
+                    resultsDiv.innerHTML = '<div class="error">❌ URL không thể truy cập hoặc không phải file âm thanh</div>';
+                }
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="error">❌ Lỗi: ${error.message}</div>`;
+            }
+        };
+
+        window.testSampleUrls = async () => {
+            const resultsDiv = document.getElementById('sample-url-results');
+            resultsDiv.innerHTML = '🔍 Đang test các URL mẫu...';
+            
+            const sampleUrls = [
+                'https://www.soundjay.com/misc/beep-07a.wav',
+                'https://sample-videos.com/zip/10/mp3/SampleAudio_0.4mb_mp3.mp3',
+                'https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg'
+            ];
+            
+            const testResults = [];
+            
+            for (const url of sampleUrls) {
+                try {
+                    const working = await freemiumMusic.testUrl(url);
+                    testResults.push({ url, working, error: null });
+                } catch (error) {
+                    testResults.push({ url, working: false, error: error.message });
+                }
+            }
+            
+            resultsDiv.innerHTML = `
+                <div class="success">
+                    📊 Kết quả test URLs:<br>
+                    ${testResults.map(result => `
+                        <div style="margin: 5px 0; padding: 6px; background: #2a2d36; border-radius: 4px; border-left: 3px solid ${result.working ? '#22c55e' : '#ef4444'};">
+                            ${result.working ? '✅' : '❌'} <small style="font-family:monospace;">${result.url}</small><br>
+                            ${result.error ? `<small style="color:#ef4444;">Error: ${result.error}</small>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        };
+
+        window.getSourceColor = (source) => {
+            const colors = {
+                'freemium': '#6366f1',
+                'jamendo': '#22c55e',
+                'archive': '#f59e0b',
+                'pixabay': '#ef4444',
+                'generated': '#8b5cf6',
+                'url': '#10b981'
+            };
+            return colors[source] || '#6b7280';
+        };
+        
+        window.testGeneration = async () => {
+            const audioContainer = document.getElementById('audio-container');
+            audioContainer.innerHTML = '🎼 Đang tạo nhạc...';
+            
+            try {
+                const jazzTrack = {
+                    title: 'Test Jazz',
+                    genre: 'Jazz',
+                    duration: 10 // 10 seconds for testing
+                };
+                
+                const audioBlob = await freemiumMusic.generateAudioForTrack(jazzTrack);
+                const audioUrl = URL.createObjectURL(audioBlob);
+                
+                audioContainer.innerHTML = `
+                    <div class="success">
+                        ✅ Nhạc Jazz được tạo thành công!<br>
+                        <audio controls>
+                            <source src="${audioUrl}" type="audio/wav">
+                            Trình duyệt không hỗ trợ audio.
+                        </audio><br>
+                        <small>Kích thước: ${Math.round(audioBlob.size / 1024)}KB</small>
+                    </div>
+                `;
+            } catch (error) {
+                audioContainer.innerHTML = `
+                    <div class="error">
+                        ❌ Lỗi tạo nhạc: ${error.message}
+                    </div>
+                `;
+            }
+        };
+        
+        console.log('🎵 Free Music Test Ready!');
+    </script>
+</body>
+</html>
