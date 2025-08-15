@@ -8,7 +8,13 @@
   # Functions directory for serverless functions
   functions = "netlify/functions"
 
-# Redirects and rewrites
+# Redirects - SPECIFIC routes FIRST
+[[redirects]]
+  from = "/api/tracks/upload"
+  to = "/.netlify/functions/upload-track"
+  status = 200
+  force = true
+
 [[redirects]]
   # Auth endpoints
   from = "/api/auth/login"
@@ -49,7 +55,7 @@
   status = 200
   force = true
 
-# All other API routes including /tracks/upload go to server function
+# GENERIC fallback - MUST be LAST API rule
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/server/:splat"
@@ -72,13 +78,8 @@
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
 
-# SPA fallback - should be last
+# SPA fallback - ABSOLUTE LAST
 [[redirects]]
   from = "/*"
   to = "/index.html"
-  status = 200
-
-[[redirects]]
-  from = "/api/tracks/upload"
-  to = "/.netlify/functions/upload-track"
   status = 200
