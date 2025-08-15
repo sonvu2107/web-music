@@ -18,7 +18,7 @@
 
 [[redirects]]
   from = "/api/auth/register"
-  to = "/.netlify/functions/server/auth/register"
+  to = "/.netlify/functions/auth-register"
   status = 200
   force = true
 
@@ -32,6 +32,12 @@
 [[redirects]]
   from = "/api/tracks/my-tracks"
   to = "/.netlify/functions/tracks-my-tracks"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/tracks/upload"
+  to = "/.netlify/functions/tracks-upload"
   status = 200
   force = true
 
@@ -71,3 +77,9 @@
     X-XSS-Protection = "1; mode=block"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
+
+# SPA fallback - should be last
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

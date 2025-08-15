@@ -457,71 +457,68 @@ class MongoDBUI {
 
   // Upload track
   async uploadTrack() {
-    if (!this.selectedFile) {
-      this.showNotification('Chưa chọn file', 'error');
-      return;
-    }
-
-    const title = document.getElementById('trackTitle').value.trim();
-    const artist = document.getElementById('trackArtist').value.trim();
-    
-    if (!title || !artist) {
-      this.showNotification('Tên bài hát và Nghệ sĩ là bắt buộc', 'error');
-      return;
-    }
-
     try {
-      // Show progress
-      const progressEl = document.getElementById('uploadProgress');
-      const uploadBtn = document.getElementById('uploadBtn');
-      
-      progressEl.style.display = 'block';
-      uploadBtn.disabled = true;
-      uploadBtn.textContent = 'Đang tải...';
+      const fileInput = document.getElementById('audioFileInput');
+      const titleInput = document.getElementById('trackTitle');
+      const artistInput = document.getElementById('trackArtist');
+      const albumInput = document.getElementById('trackAlbum');
+      const genreSelect = document.getElementById('trackGenre');
+      const publicCheckbox = document.getElementById('makePublic');
 
-      // Prepare form data
+      if (!fileInput?.files?.length) {
+        throw new Error('Vui lòng chọn file nhạc để upload');
+      }
+
+      if (!titleInput?.value || !artistInput?.value) {
+        throw new Error('Vui lòng nhập tên bài hát và nghệ sĩ');
+      }
+
+      // Show upload progress
+      const progressBar = document.getElementById('uploadProgress');
+      if (progressBar) progressBar.style.display = 'block';
+
+      // Simulate progress for better UX
+      this.updateProgress(10);
+
       const formData = new FormData();
-      formData.append('audio', this.selectedFile);
-      formData.append('title', title);
-      formData.append('artist', artist);
-      formData.append('album', document.getElementById('trackAlbum').value.trim());
-      formData.append('genre', document.getElementById('trackGenre').value);
-      formData.append('duration', Math.floor(180)); // Will get actual duration from server
-      formData.append('isPublic', document.getElementById('makePublic').checked);
+      formData.append('audio', fileInput.files[0]);
+      formData.append('title', titleInput.value);
+      formData.append('artist', artistInput.value);
+      formData.append('album', albumInput.value || '');
+      formData.append('genre', genreSelect.value || '');
+      formData.append('isPublic', publicCheckbox.checked);
 
-      // Upload to server
-      const result = await window.apiClient.uploadTrack(formData, (progress) => {
-        const progressFill = document.getElementById('progressFill');
-        const progressText = document.getElementById('progressText');
-        
-        if (progressFill) {
-          progressFill.style.width = `${progress}%`;
-        }
-        if (progressText) {
-          progressText.textContent = `${Math.round(progress)}%`;
-        }
-      });
-      
-      this.showNotification('Tải nhạc thành công!', 'success');
+      this.updateProgress(30);
+
+      const response = await window.apiClient.uploadTrack(formData);
+
+      this.updateProgress(100);
+
+      // Handle successful response or known errors
+      if (response.error) {
+        throw new Error(response.message || response.error);
+      }
+
+      this.showNotification('✅ Upload thành công!', 'success');
+      this.resetUploadForm();
       this.closeModal('uploadModal');
-      
-      // Refresh library if open
-      if (document.getElementById('libraryModal').style.display !== 'none') {
-        this.loadLibrary();
-      }
-      
-      // Refresh main library view to show new MongoDB track
-      if (window.currentUI && window.currentUI.renderLibrary) {
-        window.currentUI.renderLibrary();
-      }
-      
+
     } catch (error) {
       console.error('Upload failed:', error);
-      this.showNotification(error.message || 'Tải lên thất bại', 'error');
-    } finally {
-      const uploadBtn = document.getElementById('uploadBtn');
-      uploadBtn.disabled = false;
-      uploadBtn.textContent = 'Tải Lên';
+      
+      // Better error messages
+      let errorMessage = error.message;
+      if (errorMessage.includes('Upload chưa được hỗ trợ')) {
+        errorMessage = '🚧 Tính năng upload đang phát triển.\n💡 Hãy thử Discovery để nghe nhạc miễn phí!';
+      } else if (errorMessage.includes('SyntaxError')) {
+        errorMessage = 'Lỗi kết nối server. Vui lòng thử lại sau.';
+      }
+      
+      this.showNotification(`❌ ${errorMessage}`, 'error');
+      
+      // Hide progress bar
+      const progressBar = document.getElementById('uploadProgress');
+      if (progressBar) progressBar.style.display = 'none';
     }
   }
 
@@ -584,34 +581,25 @@ class MongoDBUI {
   }
 
   // Update profile
-  async updateProfile() {
-    try {
-      const displayNameEl = document.getElementById('profileDisplayName');
-      const themeEl = document.getElementById('prefTheme');
-      const volumeEl = document.getElementById('prefVolume');
-      const shuffleEl = document.getElementById('prefShuffle');
-      
-      if (!displayNameEl || !themeEl || !volumeEl || !shuffleEl) {
-        throw new Error('Không tìm thấy form elements');
-      }
-      
-      const profileData = {
-        displayName: displayNameEl.value.trim(),
-        preferences: {
-          theme: themeEl.value,
-          volume: parseFloat(volumeEl.value),
-          shuffle: shuffleEl.checked
-        }
-      };
+async updateProfile() {
+  try {
+    const displayNameEl = document.getElementById('profileDisplayName');
 
-      await window.apiClient.updateProfile(profileData);
-      this.showNotification('Hồ sơ đã được cập nhật!', 'success');
-      
-    } catch (error) {
-      console.error('Failed to update profile:', error);
-      this.showNotification(error.message || 'Không thể cập nhật hồ sơ', 'error');
+    if (!displayNameEl) {
+      throw new Error('Không tìm thấy form elements');
     }
+
+    const profileData = {
+      displayName: displayNameEl.value
+    };
+
+    await window.apiClient.updateProfile(profileData);
+    alert('Cập nhật hồ sơ thành công!');
+  } catch (error) {
+    console.error('Failed to update profile:', error);
+    alert(`Cập nhật hồ sơ thất bại: ${error.message}`);
   }
+}
 
   // Load library
   async loadLibrary() {
@@ -1201,6 +1189,15 @@ class MongoDBUI {
       console.error('Failed to initialize MongoDB UI:', error);
       return null;
     }
+  }
+
+  // Update progress
+  updateProgress(percent) {
+    const progressFill = document.getElementById('progressFill');
+    const progressText = document.getElementById('progressText');
+    
+    if (progressFill) progressFill.style.width = `${percent}%`;
+    if (progressText) progressText.textContent = `${percent}%`;
   }
 }
 
