@@ -8,15 +8,22 @@ const streamifier = require("streamifier");
 let cachedDb = null;
 async function connectToDatabase() {
   if (cachedDb) return cachedDb;
-
   if (!process.env.MONGODB_URI) throw new Error("MONGODB_URI not set");
+
+  console.log("🔍 Connecting to MongoDB:", process.env.MONGODB_URI.replace(/\/\/(.*):(.*)@/, "//***:***@"));
   const client = new MongoClient(process.env.MONGODB_URI, { useUnifiedTopology: true });
   await client.connect();
   cachedDb = client.db("flowplay");
+  console.log("✅ MongoDB connected, DB:", cachedDb.databaseName);
   return cachedDb;
 }
 
 // ====== Config Cloudinary ======
+console.log("📋 Cloudinary ENV check:", {
+  CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
+  API_KEY: process.env.CLOUDINARY_API_KEY ? "✅ Set" : "❌ Not set",
+  API_SECRET: process.env.CLOUDINARY_API_SECRET ? "✅ Set" : "❌ Not set",
+});
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -43,9 +50,13 @@ exports.handler = async (event) => {
   }
 
   try {
+    console.log("📥 Upload request received");
+    console.log("📋 Headers:", event.headers);
+
     // ====== Xác thực JWT ======
     const token = event.headers.authorization?.split(" ")[1];
     if (!token) {
+      console.warn("❌ Missing JWT token");
       return {
         statusCode: 401,
         headers,
@@ -56,7 +67,9 @@ exports.handler = async (event) => {
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET || "flowplay_secret_key_2025");
-    } catch {
+      console.log("✅ JWT verified, userId:", decoded.userId);
+    } catch (err) {
+      console.error("❌ Invalid JWT token:", err.message);
       return {
         statusCode: 403,
         headers,
@@ -64,11 +77,12 @@ exports.handler = async (event) => {
       };
     }
 
-    // ====== Parse multipart/form-data với busboy ======
+    // ====== Parse multipart/form-data ======
     if (
       !event.headers["content-type"] ||
       !event.headers["content-type"].includes("multipart/form-data")
     ) {
+      console.error("❌ Content-Type not multipart/form-data");
       return {
         statusCode: 415,
         headers,
@@ -84,22 +98,26 @@ exports.handler = async (event) => {
     let fileInfo = {};
     let fields = {};
 
-    return await new Promise((resolve, reject) => {
+    return await new Promise((resolve) => {
       bb.on("file", (name, file, info) => {
+        console.log(`📂 Receiving file: ${name}`, info);
         fileInfo = info;
         const buffers = [];
         file.on("data", (data) => buffers.push(data));
         file.on("end", () => {
           fileBuffer = Buffer.concat(buffers);
+          console.log(`✅ File received, size: ${fileBuffer.length} bytes`);
         });
       });
 
       bb.on("field", (name, val) => {
+        console.log(`🏷 Field: ${name} = ${val}`);
         fields[name] = val;
       });
 
       bb.on("finish", async () => {
         if (!fileBuffer) {
+          console.error("❌ No file uploaded");
           resolve({
             statusCode: 400,
             headers,
@@ -110,17 +128,24 @@ exports.handler = async (event) => {
 
         // ====== Upload lên Cloudinary ======
         try {
+          console.log("☁ Uploading to Cloudinary...");
           const uploadStream = cloudinary.uploader.upload_stream(
             { resource_type: "auto", folder: "flowplay_tracks" },
             async (error, result) => {
               if (error) {
+                console.error("❌ Cloudinary upload error:", error);
                 resolve({
                   statusCode: 500,
                   headers,
-                  body: JSON.stringify({ error: "Upload lên Cloudinary thất bại", details: error.message }),
+                  body: JSON.stringify({
+                    error: "Upload lên Cloudinary thất bại",
+                    details: error.message,
+                  }),
                 });
                 return;
               }
+
+              console.log("✅ Cloudinary upload success:", result.secure_url);
 
               // ====== Lưu MongoDB ======
               try {
@@ -142,6 +167,7 @@ exports.handler = async (event) => {
                 };
 
                 await db.collection("tracks").insertOne(newTrack);
+                console.log("✅ MongoDB insert success");
 
                 resolve({
                   statusCode: 200,
@@ -149,6 +175,7 @@ exports.handler = async (event) => {
                   body: JSON.stringify({ message: "Upload thành công", track: newTrack }),
                 });
               } catch (dbErr) {
+                console.error("❌ MongoDB insert error:", dbErr);
                 resolve({
                   statusCode: 500,
                   headers,
@@ -159,6 +186,7 @@ exports.handler = async (event) => {
           );
           streamifier.createReadStream(fileBuffer).pipe(uploadStream);
         } catch (err) {
+          console.error("❌ Upload file process error:", err);
           resolve({
             statusCode: 500,
             headers,
@@ -168,6 +196,7 @@ exports.handler = async (event) => {
       });
 
       bb.on("error", (err) => {
+        console.error("❌ Busboy parse error:", err);
         resolve({
           statusCode: 500,
           headers,
@@ -178,7 +207,7 @@ exports.handler = async (event) => {
       bb.end(Buffer.from(event.body, event.isBase64Encoded ? "base64" : "utf8"));
     });
   } catch (error) {
-    console.error("Upload error:", error);
+    console.error("❌ Upload error:", error);
     return {
       statusCode: 500,
       headers,
