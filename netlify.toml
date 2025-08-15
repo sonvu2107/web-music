@@ -10,7 +10,7 @@
 
 # Redirects and rewrites
 [[redirects]]
-  # API routes should go to serverless function
+  # API routes should go to serverless function, stripping /api prefix
   from = "/api/*"
   to = "/.netlify/functions/server/:splat"
   status = 200

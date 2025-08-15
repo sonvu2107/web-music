@@ -16,6 +16,15 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// Path rewriting middleware for Netlify
+app.use((req, res, next) => {
+  // Netlify :splat passes path without leading slash for nested paths
+  if (req.url && !req.url.startsWith('/')) {
+    req.url = '/' + req.url;
+  }
+  next();
+});
+
 // MongoDB connection with error handling
 let isConnected = false;
 
@@ -300,9 +309,7 @@ app.get('/tracks/public', async (req, res) => {
   }
 });
 
-// Export handler for Netlify with proper configuration
-const handler = serverless(app, {
-  basePath: '/api'
-});
+// Export handler for Netlify
+const handler = serverless(app);
 
 module.exports = { handler };

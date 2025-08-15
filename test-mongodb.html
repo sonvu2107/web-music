@@ -66,7 +66,10 @@
             ⚡ Simple Test
         </button>
         <button class="test-button" onclick="testAPI()">
-            🛠️ Test Main API
+            🛠️ Test Health Check
+        </button>
+        <button class="test-button" onclick="testMainAPI()">
+            ⚡ Test Main API
         </button>
     </div>
     
@@ -96,7 +99,18 @@
         }
         
         async function testAPI() {
-            showLoading('Đang test main API health...');
+            showLoading('Đang test health check...');
+            try {
+                const response = await fetch('/.netlify/functions/health');
+                const data = await response.json();
+                showResult(data, response.status === 200);
+            } catch (error) {
+                showError(`Health Check Error: ${error.message}`);
+            }
+        }
+        
+        async function testMainAPI() {
+            showLoading('Đang test main API...');
             try {
                 const response = await fetch('/api/health');
                 const data = await response.json();
