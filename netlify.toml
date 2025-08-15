@@ -77,3 +77,8 @@
   from = "/*"
   to = "/index.html"
   status = 200
+
+[[redirects]]
+  from = "/api/tracks/upload"
+  to = "/.netlify/functions/upload-track"
+  status = 200
