@@ -1,6 +1,6 @@
 [build]
-  # Build command (if needed)
-  command = "npm run build"
+  # Build command
+  command = "npm install"
   
   # Directory to publish (current directory for static files)
   publish = "."
@@ -10,12 +10,20 @@
 
 # Redirects and rewrites
 [[redirects]]
-  # API routes should go to serverless functions
+  # API routes should go to serverless function
   from = "/api/*"
   to = "/.netlify/functions/server/:splat"
   status = 200
+  force = true
 
-# Headers for security
+# Headers for security and CORS
+[[headers]]
+  for = "/.netlify/functions/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Headers = "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+    Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS"
+
 [[headers]]
   for = "/*"
   [headers.values]
@@ -23,7 +31,3 @@
     X-XSS-Protection = "1; mode=block"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
-
-# Environment variables (set these in Netlify dashboard)
-# MONGODB_URI = "your_mongodb_atlas_connection_string"
-# JWT_SECRET = "your_jwt_secret"

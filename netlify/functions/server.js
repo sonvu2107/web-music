@@ -1,33 +1,47 @@
 // netlify/functions/server.js - Netlify Function wrapper
-const serverlessExpress = require('@vendia/serverless-express');
+const serverless = require('serverless-http');
 const express = require('express');
 const mongoose = require('mongoose');
-const multer = require('multer');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const path = require('path');
-const fs = require('fs');
 
 const app = express();
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: true,
+  credentials: true
+}));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// MongoDB connection (using environment variable from Netlify)
-const MONGODB_URI = process.env.MONGODB_URI;
-if (MONGODB_URI) {
-  mongoose.connect(MONGODB_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  }).then(() => {
+// MongoDB connection with error handling
+let isConnected = false;
+
+const connectToDatabase = async () => {
+  if (isConnected) {
+    return;
+  }
+
+  try {
+    const MONGODB_URI = process.env.MONGODB_URI;
+    if (!MONGODB_URI) {
+      throw new Error('MONGODB_URI environment variable is not set');
+    }
+
+    await mongoose.connect(MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    
+    isConnected = true;
     console.log('📊 MongoDB connected successfully');
-  }).catch(err => {
-    console.error('❌ MongoDB connection error:', err);
-  });
-}
+  } catch (error) {
+    console.error('❌ MongoDB connection error:', error);
+    throw error;
+  }
+};
 
 // User Schema
 const userSchema = new mongoose.Schema({
@@ -68,7 +82,7 @@ const authenticateToken = (req, res, next) => {
     return res.status(401).json({ error: 'Access token required' });
   }
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+  jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret', (err, user) => {
     if (err) {
       return res.status(403).json({ error: 'Invalid or expired token' });
     }
@@ -77,19 +91,35 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    message: 'FlowPlay API is running on Netlify!',
-    timestamp: new Date().toISOString()
-  });
+// Health check with database connection
+app.get('/health', async (req, res) => {
+  try {
+    await connectToDatabase();
+    res.json({ 
+      status: 'OK', 
+      message: 'FlowPlay API is running on Netlify!',
+      database: isConnected ? 'Connected' : 'Disconnected',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'Error', 
+      message: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // Auth Routes
-app.post('/api/auth/register', async (req, res) => {
+app.post('/auth/register', async (req, res) => {
   try {
+    await connectToDatabase();
+    
     const { username, email, password, displayName } = req.body;
+
+    if (!username || !email || !password) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
 
     // Check if user exists
     const existingUser = await User.findOne({
@@ -119,7 +149,7 @@ app.post('/api/auth/register', async (req, res) => {
     // Generate JWT
     const token = jwt.sign(
       { userId: user._id, username: user.username },
-      process.env.JWT_SECRET,
+      process.env.JWT_SECRET || 'fallback-secret',
       { expiresIn: '7d' }
     );
 
@@ -136,13 +166,19 @@ app.post('/api/auth/register', async (req, res) => {
     
   } catch (error) {
     console.error('Registration error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/auth/login', async (req, res) => {
   try {
+    await connectToDatabase();
+    
     const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password required' });
+    }
 
     // Find user
     const user = await User.findOne({
@@ -162,7 +198,7 @@ app.post('/api/auth/login', async (req, res) => {
     // Generate JWT
     const token = jwt.sign(
       { userId: user._id, username: user.username },
-      process.env.JWT_SECRET,
+      process.env.JWT_SECRET || 'fallback-secret',
       { expiresIn: '7d' }
     );
 
@@ -181,13 +217,14 @@ app.post('/api/auth/login', async (req, res) => {
     
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
   }
 });
 
 // User Routes
-app.get('/api/user/profile', authenticateToken, async (req, res) => {
+app.get('/user/profile', authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const user = await User.findById(req.user.userId).select('-password');
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -195,12 +232,13 @@ app.get('/api/user/profile', authenticateToken, async (req, res) => {
     res.json({ user });
   } catch (error) {
     console.error('Get profile error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
   }
 });
 
-app.put('/api/user/profile', authenticateToken, async (req, res) => {
+app.put('/user/profile', authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const updates = req.body;
     const user = await User.findByIdAndUpdate(
       req.user.userId,
@@ -215,23 +253,25 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
     res.json({ message: 'Profile updated successfully', user });
   } catch (error) {
     console.error('Update profile error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
   }
 });
 
-// Track Routes (simplified for Netlify - file upload will need different approach)
-app.get('/api/tracks/my', authenticateToken, async (req, res) => {
+// Track Routes
+app.get('/tracks/my', authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const tracks = await Track.find({ uploadedBy: req.user.userId }).sort({ createdAt: -1 });
     res.json({ tracks });
   } catch (error) {
     console.error('Get my tracks error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
   }
 });
 
-app.get('/api/tracks/public', async (req, res) => {
+app.get('/tracks/public', async (req, res) => {
   try {
+    await connectToDatabase();
     const { search, genre, limit = 20 } = req.query;
     
     const query = { isPublic: true };
@@ -256,13 +296,9 @@ app.get('/api/tracks/public', async (req, res) => {
     res.json({ tracks });
   } catch (error) {
     console.error('Get public tracks error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
   }
 });
 
-// Note: File upload and streaming will need to be handled differently on Netlify
-// You might want to use Cloudinary or similar service for file storage
-
-// Export the serverless function
-const handler = serverlessExpress({ app });
-module.exports = { handler };
+// Export handler for Netlify
+module.exports.handler = serverless(app);
