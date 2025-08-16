@@ -1,7 +1,7 @@
 const { MongoClient, ObjectId } = require('mongodb');
 
 const MONGODB_URI = process.env.MONGODB_URI;
-const DATABASE_NAME = 'test';
+const DATABASE_NAME = 'flowplay'; // ✅ Đổi từ 'test' thành 'flowplay'
 
 let isConnected = false;
 let cachedClient = null;

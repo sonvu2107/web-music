@@ -55,6 +55,13 @@
   status = 200
   force = true
 
+[[redirects]]
+  # Delete track endpoint
+  from = "/api/tracks/:id"
+  to = "/.netlify/functions/tracks-delete"
+  status = 200
+  force = true
+
 # GENERIC fallback - MUST be LAST API rule
 [[redirects]]
   from = "/api/*"

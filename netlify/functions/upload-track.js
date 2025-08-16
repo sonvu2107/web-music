@@ -1,5 +1,4 @@
 const { MongoClient, ObjectId } = require("mongodb");
-const jwt = require("jsonwebtoken");
 const cloudinary = require("cloudinary").v2;
 const busboy = require("busboy");
 const streamifier = require("streamifier");
@@ -35,17 +34,111 @@ const connectToDatabase = async () => {
   }
 };
 
+// Cloudinary configuration
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
+// Helper function to upload buffer to Cloudinary
+const uploadToCloudinary = (buffer, options) => {
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: "video", // For audio files
+        folder: "flowplay/tracks",
+        ...options,
+      },
+      (error, result) => {
+        if (error) {
+          console.error("Cloudinary upload error:", error);
+          reject(error);
+        } else {
+          console.log("Cloudinary upload success:", result.public_id);
+          resolve(result);
+        }
+      }
+    );
+
+    streamifier.createReadStream(buffer).pipe(uploadStream);
+  });
+};
+
+// Helper function to parse multipart form data
+const parseMultipartData = (event) => {
+  return new Promise((resolve, reject) => {
+    const fields = {};
+    const files = {};
+    let fileBuffer = null;
+    let fileName = "";
+    let mimeType = "";
+
+    const bb = busboy({
+      headers: {
+        "content-type": event.headers["content-type"] || event.headers["Content-Type"],
+      },
+      limits: {
+        fileSize: 50 * 1024 * 1024, // 50MB limit
+      },
+    });
+
+    bb.on("field", (fieldname, val) => {
+      console.log(`Field [${fieldname}]: ${val}`);
+      fields[fieldname] = val;
+    });
+
+    bb.on("file", (fieldname, file, info) => {
+      console.log(`File [${fieldname}]: ${info.filename}, type: ${info.mimeType}`);
+      fileName = info.filename;
+      mimeType = info.mimeType;
+
+      const chunks = [];
+      file.on("data", (chunk) => {
+        chunks.push(chunk);
+      });
+
+      file.on("end", () => {
+        fileBuffer = Buffer.concat(chunks);
+        console.log(`File ${fileName} received: ${fileBuffer.length} bytes`);
+      });
+    });
+
+    bb.on("finish", () => {
+      console.log("Busboy finished parsing");
+      resolve({
+        fields,
+        file: fileBuffer
+          ? {
+              buffer: fileBuffer,
+              filename: fileName,
+              mimeType: mimeType,
+            }
+          : null,
+      });
+    });
+
+    bb.on("error", (err) => {
+      console.error("Busboy error:", err);
+      reject(err);
+    });
+
+    // Convert base64 body to buffer if needed
+    const body = event.isBase64Encoded
+      ? Buffer.from(event.body, "base64")
+      : Buffer.from(event.body);
+
+    bb.write(body);
+    bb.end();
+  });
+};
+
 exports.handler = async (event, context) => {
   console.log("=== UPLOAD TRACK FUNCTION ===");
   console.log("Method:", event.httpMethod);
   console.log("Content-Type:", event.headers["content-type"]);
   console.log("Database:", DATABASE_NAME);
+  console.log("Body size:", event.body ? event.body.length : 0);
 
   const headers = {
     "Access-Control-Allow-Origin": "*",
@@ -112,30 +205,121 @@ exports.handler = async (event, context) => {
 
     console.log("User verified:", user.username);
 
-    // Check Content-Type for multipart data
+    // Check if request contains file upload
     const contentType = event.headers["content-type"] || "";
-    console.log("Content-Type received:", contentType);
+    
+    if (!contentType.includes("multipart/form-data")) {
+      // Create test track if no file uploaded
+      console.log("No file uploaded, creating test track...");
+      
+      const trackData = {
+        _id: new ObjectId(),
+        title: `Test Track ${new Date().toLocaleString("vi-VN")}`,
+        artist: user.displayName || user.username,
+        album: "",
+        duration: 180,
+        genre: "Test",
+        fileName: "test_track.mp3",
+        fileSize: 1024000,
+        mimeType: "audio/mpeg",
+        userId: user._id,
+        uploadDate: new Date(),
+        isPublic: false,
+        status: "uploaded",
+        playCount: 0,
+        likeCount: 0,
+        sourceType: "test",
+        cloudinaryUrl: null,
+        cloudinaryId: null,
+      };
 
-    // For now, create a test track (since file processing is complex)
-    console.log("Creating test track record...");
+      const result = await tracksCollection.insertOne(trackData);
+      await usersCollection.updateOne(
+        { _id: user._id },
+        { $inc: { trackCount: 1 } }
+      );
 
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          success: true,
+          message: "Test track created successfully",
+          track: {
+            id: trackData._id,
+            title: trackData.title,
+            artist: trackData.artist,
+            duration: trackData.duration,
+            status: trackData.status,
+          },
+          database: DATABASE_NAME,
+        }),
+      };
+    }
+
+    // Parse multipart form data
+    console.log("Parsing multipart form data...");
+    const { fields, file } = await parseMultipartData(event);
+
+    if (!file) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: "No audio file provided" }),
+      };
+    }
+
+    console.log("File parsed:", file.filename, file.mimeType, file.buffer.length, "bytes");
+
+    // Validate file type
+    const allowedTypes = ["audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/m4a"];
+    if (!allowedTypes.includes(file.mimeType)) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ 
+          error: "Invalid file type. Only audio files are allowed.",
+          allowedTypes 
+        }),
+      };
+    }
+
+    // Upload to Cloudinary
+    console.log("Uploading to Cloudinary...");
+    const cloudinaryResult = await uploadToCloudinary(file.buffer, {
+      public_id: `track_${user.username}_${Date.now()}`,
+      format: "mp3", // Convert to mp3
+    });
+
+    console.log("Cloudinary upload completed:", cloudinaryResult.secure_url);
+
+    // Create track record in database
     const trackData = {
       _id: new ObjectId(),
-      title: `Uploaded Track ${new Date().toLocaleString("vi-VN")}`,
-      artist: user.username,
-      album: "",
-      duration: 180, // 3 minutes default
-      genre: "Unknown",
-      fileName: "uploaded_track.mp3",
-      fileSize: 1024000, // 1MB default
-      mimeType: "audio/mpeg",
+      title: fields.title || file.filename.replace(/\.[^/.]+$/, ""), // Remove extension
+      artist: fields.artist || user.displayName || user.username,
+      album: fields.album || "",
+      duration: cloudinaryResult.duration || 0,
+      genre: fields.genre || "Unknown",
+      fileName: file.filename,
+      fileSize: file.buffer.length,
+      mimeType: file.mimeType,
       userId: user._id,
       uploadDate: new Date(),
-      isPublic: false,
+      isPublic: fields.isPublic === "true" || false,
       status: "uploaded",
       playCount: 0,
       likeCount: 0,
       sourceType: "upload",
+      // Cloudinary data
+      cloudinaryUrl: cloudinaryResult.secure_url,
+      cloudinaryId: cloudinaryResult.public_id,
+      cloudinaryData: {
+        format: cloudinaryResult.format,
+        bytes: cloudinaryResult.bytes,
+        duration: cloudinaryResult.duration,
+        created_at: cloudinaryResult.created_at,
+      },
     };
 
     const result = await tracksCollection.insertOne(trackData);
@@ -154,19 +338,24 @@ exports.handler = async (event, context) => {
       headers,
       body: JSON.stringify({
         success: true,
-        message: "Track uploaded successfully (test mode)",
+        message: "Track uploaded successfully to Cloudinary",
         track: {
           id: trackData._id,
           title: trackData.title,
           artist: trackData.artist,
           duration: trackData.duration,
+          fileSize: trackData.fileSize,
           uploadDate: trackData.uploadDate,
           status: trackData.status,
+          isPublic: trackData.isPublic,
+          cloudinaryUrl: trackData.cloudinaryUrl,
+          playUrl: trackData.cloudinaryUrl, // For audio player
         },
         database: DATABASE_NAME,
         timestamp: new Date().toISOString(),
       }),
     };
+
   } catch (error) {
     console.error("=== UPLOAD ERROR ===");
     console.error("Error:", error.message);
@@ -183,7 +372,6 @@ exports.handler = async (event, context) => {
       }),
     };
   } finally {
-    // Keep connection cached
     console.log("Upload function completed");
   }
 };
